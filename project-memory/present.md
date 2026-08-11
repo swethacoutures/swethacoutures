@@ -140,6 +140,23 @@
   that may only speak plain HTTP. The LAN dev-server path is proven; the live Vercel path is not
   yet confirmed against real hardware. If the device connects on LAN but goes silent against the
   domain, that is the cause and a plain-HTTP relay is needed.
+- **🔴 THE ROOT CAUSE, and the lesson (2026-08-11).** The terminal spent two days unable to
+  reach anything on the internet because `Menu > Comm. > Ethernet` had **Gateway `0.0.0.0`
+  and DNS `0.0.0.0`** with DHCP off. A device with a static IP but no gateway can still be
+  pinged from a machine on the same subnet, so it *looks* perfectly healthy — but it cannot
+  route off the local network or resolve a single hostname. That is why it reached the PC at
+  `192.168.1.5` and never once reached Vercel or Cloudflare. Fixed by setting Gateway
+  `192.168.1.1` and DNS `8.8.8.8`. **On any future "the device cannot connect", ask for the
+  Ethernet screen FIRST** — before certificates, protocols or server config. A ping reply
+  proves nothing about internet access.
+- **Working shape (verified 2026-08-11):** device --plain HTTP--> `punch.swethacoutures.com`
+  (Cloudflare Worker `cloudflare-worker/punch-relay.js`) --HTTPS--> Vercel --> Firestore.
+  The Worker is required: every Cloudflare SSL mode is "encrypt to origin *if the request
+  uses HTTPS*", so Cloudflare mirrors the visitor's protocol and would forward plain HTTP to
+  Vercel, which redirects. Site is on `swethacoutures.com`; root and `www` are grey-cloud
+  (straight to Vercel, HTTPS enforced), only `punch` is proxied.
+- `scripts/device-receiver.ts` + the Startup-folder shortcut remain as a LAN fallback. Not
+  needed while the internet path works; delete the shortcut from `shell:startup` to retire it.
 - See `docs/BIOMETRIC_DEVICE.md`.
 
 ## 0b. 2026-08-08 change set

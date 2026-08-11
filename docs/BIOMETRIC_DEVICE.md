@@ -326,7 +326,18 @@ Two causes have already been hit and fixed, both of which produce an identical, 
 2. **A mangled `FIREBASE_PRIVATE_KEY`.** The code now repairs the common paste mistakes, but
    `/api/ping` will show `build_firestore_store=FAILED` with the real reason if it cannot.
 
-### Nothing in `deviceRawLogs` at all
+### Nothing in `deviceRawLogs` at all — CHECK THIS FIRST
+
+`Menu > Comm. > Ethernet`. If **Gateway** or **DNS** is `0.0.0.0`, the device has no route
+off the local network and cannot resolve any hostname. It will still answer a ping from a
+PC on the same subnet, so it looks fine. This cost two days in August 2026.
+
+| Field | Must be |
+|---|---|
+| Gateway | your router, e.g. `192.168.1.1` — **not** `0.0.0.0` |
+| DNS | `8.8.8.8` — **not** `0.0.0.0` |
+
+### Other reasons for an empty log
 
 The device is not reaching you.
 
