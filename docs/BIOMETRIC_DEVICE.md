@@ -34,7 +34,7 @@ in the Vercel dashboard — nowhere else. Never commit it, never paste it into a
 leaks, delete the key on that same Service accounts page.
 
 ---
-
+ 
 ## Step 2 — Test on your LAN first
 
 The device does not need internet for this. It only needs to be on the **same network as
