@@ -10,12 +10,19 @@
 import { doc, updateDoc } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 import {
+  fetchAttendanceSettings,
   fetchEmployees,
   fetchRecords,
   saveEmployee,
 } from './attendanceStore';
 import { calculateSalary, monthBounds, toMonthKey } from './salaryCalc';
-import type { AttendanceEmployee, AttendanceRecord, SalaryMode } from './types';
+import {
+  DEFAULT_ATTENDANCE_SETTINGS,
+  type AttendanceEmployee,
+  type AttendanceRecord,
+  type AttendanceSettings,
+  type SalaryMode,
+} from './types';
 
 export interface StaffPay {
   id: string;
@@ -82,7 +89,8 @@ export function summariseAttendance(
   staff: StaffPay,
   employees: AttendanceEmployee[],
   records: AttendanceRecord[],
-  periodKey: string = toMonthKey(new Date())
+  periodKey: string = toMonthKey(new Date()),
+  settings: AttendanceSettings = DEFAULT_ATTENDANCE_SETTINGS
 ): AttendanceSummary {
   const { employee, matchedBy } = matchAttendanceEmployee(staff, employees);
   const { start, end } = monthBounds(periodKey);
@@ -108,7 +116,7 @@ export function summariseAttendance(
     salaryAmount: staff.salaryAmount || employee.salaryAmount || 0,
   };
 
-  const breakdown = calculateSalary(effective, records, start, end);
+  const breakdown = calculateSalary(effective, records, start, end, settings);
   const own = records
     .filter((record) => record.empCode === employee.empCode && record.date >= start && record.date <= end)
     .sort((a, b) => b.date.localeCompare(a.date));
@@ -133,10 +141,15 @@ export function summariseAttendance(
 export async function loadAttendanceContext(periodKey: string = toMonthKey(new Date())): Promise<{
   employees: AttendanceEmployee[];
   records: AttendanceRecord[];
+  settings: AttendanceSettings;
 }> {
   const { start, end } = monthBounds(periodKey);
-  const [employees, records] = await Promise.all([fetchEmployees(), fetchRecords(start, end)]);
-  return { employees, records };
+  const [employees, records, settings] = await Promise.all([
+    fetchEmployees(),
+    fetchRecords(start, end),
+    fetchAttendanceSettings(),
+  ]);
+  return { employees, records, settings };
 }
 
 /**

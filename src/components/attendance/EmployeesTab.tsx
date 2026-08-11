@@ -10,11 +10,12 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
-import { Plus, Settings2, Trash2, Fingerprint } from 'lucide-react';
+import { Plus, Settings2, Trash2, Fingerprint, Download } from 'lucide-react';
 import { toast } from '@/hooks/use-toast';
 import { deleteEmployee } from '@/utils/attendance/attendanceStore';
+import { requestNamesFromDevice } from '@/utils/attendance/deviceStore';
 import { formatCurrency } from '@/utils/attendance/salaryCalc';
-import type { AttendanceEmployee, SalaryMode } from '@/utils/attendance/types';
+import type { AttendanceDevice, AttendanceEmployee, SalaryMode } from '@/utils/attendance/types';
 import EmployeeSalaryDialog from './EmployeeSalaryDialog';
 
 interface EmployeesTabProps {
@@ -22,6 +23,8 @@ interface EmployeesTabProps {
   staffOptions: { id: string; name: string }[];
   loading: boolean;
   onChanged: () => void;
+  /** Used to ask the terminal for the names behind the PINs. */
+  devices: AttendanceDevice[];
 }
 
 const MODE_LABEL: Record<SalaryMode, string> = {
@@ -37,12 +40,50 @@ const MODE_SUFFIX: Record<SalaryMode, string> = {
 };
 
 const EmployeesTab: React.FC<EmployeesTabProps> = ({
+  devices,
   employees,
   staffOptions,
   loading,
   onChanged,
 }) => {
   const [dialogOpen, setDialogOpen] = useState(false);
+  const [fetchingNames, setFetchingNames] = useState(false);
+
+  /**
+   * Anyone whose name is still just their PIN. Punches carry no name, so a new person
+   * always lands here until the device is asked or an admin types one in.
+   */
+  const unnamed = employees.filter((employee) => !employee.name || employee.name === employee.empCode);
+
+  const handleFetchNames = async () => {
+    const device = devices.find((d) => d.status === 'approved');
+    if (!device) {
+      toast({
+        title: 'No approved device',
+        description: 'The terminal has to be connected and approved before it can be asked.',
+        variant: 'destructive',
+      });
+      return;
+    }
+
+    setFetchingNames(true);
+    try {
+      const queued = await requestNamesFromDevice(device.sn, unnamed.map((e) => e.empCode));
+      toast({
+        title: `Asked the device for ${queued} name${queued === 1 ? '' : 's'}`,
+        description:
+          'It answers on its next check-in, usually within a minute. Names appear here automatically.',
+      });
+    } catch (error) {
+      toast({
+        title: 'Could not reach the device queue',
+        description: error instanceof Error ? error.message : 'Unknown error',
+        variant: 'destructive',
+      });
+    } finally {
+      setFetchingNames(false);
+    }
+  };
   const [editing, setEditing] = useState<AttendanceEmployee | null>(null);
 
   const needsSetup = employees.filter((employee) => !employee.salaryMode || !employee.salaryAmount);
@@ -82,19 +123,32 @@ const EmployeesTab: React.FC<EmployeesTabProps> = ({
         </div>
       )}
 
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <p className="text-sm text-gray-600 dark:text-gray-400">
           {employees.length} employee{employees.length === 1 ? '' : 's'}
+          {unnamed.length > 0 && (
+            <span className="ml-2 text-amber-600 dark:text-amber-400">
+              · {unnamed.length} still showing as a number
+            </span>
+          )}
         </p>
-        <Button
-          onClick={() => {
-            setEditing(null);
-            setDialogOpen(true);
-          }}
-        >
-          <Plus className="mr-2 h-4 w-4" />
-          Add employee
-        </Button>
+        <div className="flex gap-2">
+          {unnamed.length > 0 && (
+            <Button variant="outline" onClick={handleFetchNames} disabled={fetchingNames}>
+              <Download className="mr-2 h-4 w-4" />
+              {fetchingNames ? 'Asking device…' : 'Get names from device'}
+            </Button>
+          )}
+          <Button
+            onClick={() => {
+              setEditing(null);
+              setDialogOpen(true);
+            }}
+          >
+            <Plus className="mr-2 h-4 w-4" />
+            Add employee
+          </Button>
+        </div>
       </div>
 
       <Card>

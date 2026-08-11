@@ -10,7 +10,7 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
-import { ChevronLeft, ChevronRight, Check, Undo2, Download, Wallet } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Check, Undo2, Download, Wallet, Settings2 } from 'lucide-react';
 import { toast } from '@/hooks/use-toast';
 import { useAuth } from '@/contexts/AuthContext';
 import { fetchPayments, markPaid, undoPayment } from '@/utils/attendance/attendanceStore';
@@ -21,7 +21,12 @@ import {
   monthBounds,
   toMonthKey,
 } from '@/utils/attendance/salaryCalc';
-import type { AttendanceEmployee, AttendanceRecord, SalaryPayment } from '@/utils/attendance/types';
+import type {
+  AttendanceEmployee,
+  AttendanceRecord,
+  AttendanceSettings,
+  SalaryPayment,
+} from '@/utils/attendance/types';
 
 interface PayrollTabProps {
   employees: AttendanceEmployee[];
@@ -29,6 +34,9 @@ interface PayrollTabProps {
   allRecords: AttendanceRecord[];
   /** Asks the page to load records covering the given range. */
   onNeedRange: (start: string, end: string) => void;
+  /** Shop-wide working rules — the basis of every hourly rate below. */
+  settings: AttendanceSettings;
+  onEditSettings: () => void;
 }
 
 function shiftMonth(periodKey: string, delta: number): string {
@@ -36,7 +44,13 @@ function shiftMonth(periodKey: string, delta: number): string {
   return toMonthKey(new Date(year, month - 1 + delta, 1));
 }
 
-const PayrollTab: React.FC<PayrollTabProps> = ({ employees, allRecords, onNeedRange }) => {
+const PayrollTab: React.FC<PayrollTabProps> = ({
+  employees,
+  allRecords,
+  onNeedRange,
+  settings,
+  onEditSettings,
+}) => {
   const { userData } = useAuth();
   const [periodKey, setPeriodKey] = useState(() => toMonthKey(new Date()));
   const [payments, setPayments] = useState<SalaryPayment[]>([]);
@@ -73,10 +87,10 @@ const PayrollTab: React.FC<PayrollTabProps> = ({ employees, allRecords, onNeedRa
         .filter((employee) => employee.active !== false)
         .map((employee) => ({
           employee,
-          breakdown: calculateSalary(employee, allRecords, start, end),
+          breakdown: calculateSalary(employee, allRecords, start, end, settings),
           payment: paymentByCode.get(employee.empCode),
         })),
-    [employees, allRecords, start, end, paymentByCode]
+    [employees, allRecords, start, end, paymentByCode, settings]
   );
 
   const totals = useMemo(() => {
@@ -158,8 +172,10 @@ const PayrollTab: React.FC<PayrollTabProps> = ({ employees, allRecords, onNeedRa
         'Pay basis': row.employee.salaryMode || 'not set',
         Rate: row.employee.salaryAmount || 0,
         'Days worked': row.breakdown.daysWorked,
-        'Hours worked': row.breakdown.hoursWorked,
-        'Working days': row.breakdown.workingDays,
+        'Hours (raw)': row.breakdown.hoursWorked,
+        'Hours (paid)': row.breakdown.paidHours,
+        'Expected hours': row.breakdown.expectedHours,
+        'Hourly rate': row.breakdown.hourlyRate,
         Salary: row.breakdown.amount,
         Status: row.payment?.status === 'paid' ? 'Paid' : 'Pending',
         'Paid on': row.payment?.status === 'paid' ? row.payment.paidAt : '',
@@ -190,10 +206,16 @@ const PayrollTab: React.FC<PayrollTabProps> = ({ employees, allRecords, onNeedRa
             <ChevronRight className="h-4 w-4" />
           </Button>
         </div>
-        <Button variant="outline" onClick={handleExport}>
-          <Download className="mr-2 h-4 w-4" />
-          Export Excel
-        </Button>
+        <div className="flex gap-2">
+          <Button variant="outline" onClick={onEditSettings}>
+            <Settings2 className="mr-2 h-4 w-4" />
+            Working rules
+          </Button>
+          <Button variant="outline" onClick={handleExport}>
+            <Download className="mr-2 h-4 w-4" />
+            Export Excel
+          </Button>
+        </div>
       </div>
 
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
@@ -231,7 +253,8 @@ const PayrollTab: React.FC<PayrollTabProps> = ({ employees, allRecords, onNeedRa
                 <TableRow>
                   <TableHead>Employee</TableHead>
                   <TableHead className="text-right">Days</TableHead>
-                  <TableHead className="text-right">Hours</TableHead>
+                  <TableHead className="text-right">Hours worked</TableHead>
+                  <TableHead className="text-right">Rate/hr</TableHead>
                   <TableHead>Calculation</TableHead>
                   <TableHead className="text-right">Salary</TableHead>
                   <TableHead className="text-right">Payment</TableHead>
@@ -240,7 +263,7 @@ const PayrollTab: React.FC<PayrollTabProps> = ({ employees, allRecords, onNeedRa
               <TableBody>
                 {rows.length === 0 ? (
                   <TableRow>
-                    <TableCell colSpan={6} className="py-12 text-center">
+                    <TableCell colSpan={7} className="py-12 text-center">
                       <Wallet className="mx-auto mb-3 h-8 w-8 text-gray-400" />
                       <p className="font-medium text-gray-700 dark:text-gray-300">No active employees</p>
                       <p className="mt-1 text-sm text-gray-500">
@@ -261,7 +284,13 @@ const PayrollTab: React.FC<PayrollTabProps> = ({ employees, allRecords, onNeedRa
                           <div className="text-xs text-gray-500">Code {row.employee.empCode}</div>
                         </TableCell>
                         <TableCell className="text-right">{row.breakdown.daysWorked}</TableCell>
-                        <TableCell className="text-right">{row.breakdown.hoursWorked}</TableCell>
+                        <TableCell className="text-right">
+                          <span className="font-medium">{row.breakdown.paidHours}</span>
+                          <span className="text-xs text-gray-500"> / {row.breakdown.expectedHours}</span>
+                        </TableCell>
+                        <TableCell className="text-right text-xs text-gray-600 dark:text-gray-400">
+                          {row.breakdown.hourlyRate ? formatCurrency(row.breakdown.hourlyRate) : '—'}
+                        </TableCell>
                         <TableCell>
                           <span className="text-xs text-gray-600 dark:text-gray-400">
                             {row.breakdown.formula}
@@ -314,9 +343,11 @@ const PayrollTab: React.FC<PayrollTabProps> = ({ employees, allRecords, onNeedRa
       </Card>
 
       <p className="text-xs text-gray-500">
-        Salary is calculated from check-in and check-out records for {formatMonthLabel(periodKey)}.
-        Monthly-paid employees are pro-rated by days present. Undo restores a row to payable and
-        keeps the change on record.
+        Monthly salaries are paid by the hour: salary ÷ (working days × {settings.standardHoursPerDay} hrs)
+        gives the rate, and pay follows the hours actually worked — so arriving late and staying on
+        still earns a full day. {settings.breakMinutes} minutes of unpaid break come off each day
+        worked. Pay is capped at the full salary, so extra hours make up a shortfall rather than
+        paying a bonus. "Hours worked" shows paid hours against a full month.
       </p>
     </div>
   );

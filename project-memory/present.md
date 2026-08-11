@@ -157,6 +157,38 @@
   (straight to Vercel, HTTPS enforced), only `punch` is proxied.
 - `scripts/device-receiver.ts` + the Startup-folder shortcut remain as a LAN fallback. Not
   needed while the internet path works; delete the shortcut from `shell:startup` to retire it.
+
+## 0b. 2026-08-11 — payroll rules, names from the device, audit log
+
+- **Monthly salary is now paid BY THE HOUR.** `salary ÷ (working days × standard hours)` gives
+  an hourly rate; pay follows hours actually worked. So arriving late and staying on still earns
+  a full day, leaving early docks only the hours missed, and **hours beyond a full month are
+  overtime paid at the same rate — there is no cap.** (The client first asked for a cap, then
+  changed to paid overtime on 2026-08-11. Latest wins.)
+- **Lunch comes from the punches, not an estimate.** 4+ punches in a day are paired into worked
+  segments — (1st→2nd) morning, (3rd→4th) afternoon — and the gap between them is excluded
+  exactly. A trailing odd punch is left unpaired rather than guessed at. Only when there are 2
+  punches (nobody clocked out for lunch) is the configured fixed break deducted instead.
+- **Shop rules live in one doc, `settings/attendance`:** office start/end, standard hours per
+  day, break minutes, weekly off days. Office hours define the standard day only — work outside
+  them still counts, which is what makes "come late, stay late" work. Edited from **Payroll →
+  Working rules**, which shows a live worked example on ₹10,000 before saving.
+- **⚠️ Rates are computed from the EXACT quotient, never the rounded one.** ₹10,000/208 is
+  ₹48.0769…; rounding to ₹48.08 before multiplying makes half a month pay ₹5,000.32. The rounded
+  figure is display-only. Covered by `npm run test:salary`.
+- **Names from the device** via the ADMS command queue: `deviceCommands/{sn}` holds one document
+  with a `pending` array; `/iclock/getrequest` returns `C:<id>:DATA QUERY USERINFO PIN=<pin>` and
+  empties the queue in the same write, `/iclock/devicecmd` records the reply. ATTLOG carries only
+  a PIN, so this is the only way to get names without LAN access. **Employees → Get names from
+  device.** An admin-entered name is never overwritten. Unapproved devices are never sent commands.
+- **`activityLog` collection + `src/utils/activityLog.ts`.** Every hand edit, deletion, payment,
+  device approve/block and settings change is recorded with who, when, and a field-level diff.
+  The actor is set once in `AuthContext`. Logging is **fire-and-forget** — a logging failure must
+  never undo the user's change. Viewable on **Attendance → Activity**; `firestore.rules` allows
+  admin create + read but **denies update and delete**, because a rewritable log proves nothing.
+- **Tests:** `npm run test:salary` (31 checks, the owner's own worked examples) and
+  `npm run test:device` (60 checks). Both run with no framework and no Firebase.
+
 - See `docs/BIOMETRIC_DEVICE.md`.
 
 ## 0b. 2026-08-08 change set

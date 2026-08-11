@@ -79,6 +79,36 @@ export interface SalaryPayment {
 }
 
 /**
+ * Shop-wide attendance rules. One document: `settings/attendance`.
+ *
+ * These are deliberately *not* stored per employee. The office runs one shift, and a single
+ * set of rules is what makes "everyone is paid the same way" auditable. Because the rules
+ * live here rather than being baked into each stored record, changing one and recalculating
+ * a past month works — the raw punches are never rewritten.
+ */
+export interface AttendanceSettings {
+  /** 'HH:mm' — the standard working day. Hours outside it still count towards pay. */
+  officeStartTime: string;
+  officeEndTime: string;
+  /** Paid hours in a normal day. The divisor behind the hourly rate. */
+  standardHoursPerDay: number;
+  /** Unpaid break deducted from each worked day. 60 = one hour. */
+  breakMinutes: number;
+  /** Weekday numbers that are not working days. 0 = Sunday. */
+  weeklyOffDays: number[];
+  updatedAt?: string;
+  updatedBy?: string;
+}
+
+export const DEFAULT_ATTENDANCE_SETTINGS: AttendanceSettings = {
+  officeStartTime: '09:00',
+  officeEndTime: '18:00',
+  standardHoursPerDay: 8,
+  breakMinutes: 60,
+  weeklyOffDays: [0],
+};
+
+/**
  * A fingerprint terminal that has contacted the ingest server.
  * Firestore doc ID = the device's serial number.
  */

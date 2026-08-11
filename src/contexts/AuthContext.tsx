@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useEffect, useState } from 'react';
 import { User, signInWithEmailAndPassword, signOut, onAuthStateChanged, createUserWithEmailAndPassword } from 'firebase/auth';
 import { doc, getDoc, setDoc } from 'firebase/firestore';
+import { setActivityActor } from '@/utils/activityLog';
 import { auth, db } from '@/lib/firebase';
 import { toast } from '@/hooks/use-toast';
 
@@ -35,6 +36,17 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [user, setUser] = useState<User | null>(null);
   const [userData, setUserData] = useState<UserData | null>(null);
   const [loading, setLoading] = useState(true);
+
+  /**
+   * Tell the audit log who is signed in.
+   *
+   * Set here rather than at each call site so every recorded change carries a name without
+   * the mutation helpers needing a user argument threaded through them. An entry attributed
+   * to "unknown" is far worse than one attributed slightly late.
+   */
+  useEffect(() => {
+    setActivityActor(userData ? { uid: userData.uid, name: userData.name || userData.email } : null);
+  }, [userData]);
 
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (user) => {

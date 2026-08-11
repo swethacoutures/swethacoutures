@@ -56,6 +56,7 @@ export const BACKUP_COLLECTIONS: CollectionSpec[] = [
   { name: 'salaryPayments', sheet: 'salary_payments', label: 'Salary payments', dateFields: ['paidAt', 'periodStart'], description: 'Payroll history' },
   { name: 'devices', sheet: 'devices', label: 'Fingerprint devices', dateFields: [], description: 'Terminals + approval status' },
   { name: 'devicePunches', sheet: 'device_punches', label: 'Raw punches', dateFields: ['punchDate', 'receivedAt'], description: 'Every fingerprint press from the device' },
+  { name: 'activityLog', sheet: 'activity_log', label: 'Activity log', dateFields: ['at'], description: 'Who edited attendance, and what changed' },
   // deviceRawLogs is deliberately NOT backed up: it is short-lived diagnostic traffic with a
   // TTL policy on it, and every punch it contains is already in devicePunches.
 

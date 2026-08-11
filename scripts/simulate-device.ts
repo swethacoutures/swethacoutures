@@ -349,8 +349,57 @@ try {
     check('logs carry an expiry for the TTL policy', !!garbage?.expiresAt);
   }
 
-  /* -------------------------------------------------- 11. serial allowlist */
-  section('11. DEVICE_SERIALS allowlist');
+  /* ------------------------------------------------------ 11. command queue */
+  section('11. Command queue — asking the device for employee names');
+  {
+    // What the app writes when an admin presses "Get names from device".
+    await store.set(COLLECTIONS.commands, KNOWN_SN, {
+      pending: [
+        { id: '100', command: 'DATA QUERY USERINFO PIN=1001', queuedAt: '2026-08-11T09:00:00Z' },
+        { id: '101', command: 'DATA QUERY USERINFO PIN=1002', queuedAt: '2026-08-11T09:00:00Z' },
+      ],
+    });
+
+    const poll = await device.poll();
+    check(
+      'the poll delivers the queued commands',
+      poll.body.includes('C:100:DATA QUERY USERINFO PIN=1001') &&
+        poll.body.includes('C:101:DATA QUERY USERINFO PIN=1002'),
+      JSON.stringify(poll.body)
+    );
+
+    const queue = await store.get(COLLECTIONS.commands, KNOWN_SN);
+    check('the queue is emptied so nothing is sent twice', (queue?.pending as unknown[])?.length === 0);
+    check('and the commands are kept as sent', (queue?.sent as unknown[])?.length === 2);
+
+    const second = await device.poll();
+    check('a second poll gets plain OK, not a repeat', second.body === 'OK', JSON.stringify(second.body));
+
+    // The device reports the result on /iclock/devicecmd.
+    await fetch(new URL(`/iclock/devicecmd?SN=${KNOWN_SN}`, baseUrl), {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain' },
+      body: 'ID=100&Return=0&CMD=DATA',
+    });
+    const acked = await store.get(COLLECTIONS.commands, KNOWN_SN);
+    const sent = (acked?.sent as Record<string, unknown>[]) || [];
+    check(
+      'the acknowledgement is recorded against the right command',
+      sent.find((c) => c.id === '100')?.result === '0',
+      JSON.stringify(sent.find((c) => c.id === '100'))
+    );
+
+    // An unapproved device must never be driven.
+    await store.set(COLLECTIONS.devices, STRANGER_SN, { status: 'pending' });
+    await store.set(COLLECTIONS.commands, STRANGER_SN, {
+      pending: [{ id: '200', command: 'DATA QUERY USERINFO PIN=1', queuedAt: '2026-08-11T09:00:00Z' }],
+    });
+    const strangerPoll = await makeDevice(baseUrl, STRANGER_SN).poll();
+    check('an unapproved device is never sent commands', strangerPoll.body === 'OK', JSON.stringify(strangerPoll.body));
+  }
+
+  /* -------------------------------------------------- 12. serial allowlist */
+  section("12. DEVICE_SERIALS allowlist");
   {
     const locked = defaultConfig({ DEVICE_SERIALS: `${KNOWN_SN}, OTHER` });
     const before = store.dump(COLLECTIONS.punches).length;

@@ -74,6 +74,20 @@ service cloud.firestore {
       allow read, write: if isAdmin();
     }
 
+    /**
+     * The audit trail. Admins may read and append, but never edit or delete — a log that
+     * can be rewritten is not evidence of anything.
+     */
+    match /activityLog/{entryId} {
+      allow read: if isAdmin();
+      allow create: if isAdmin();
+      allow update, delete: if false;
+    }
+
+    match /deviceCommands/{deviceSn} {
+      allow read, write: if isAdmin();
+    }
+
     match /syncState/{docId} {
       allow read, write: if isAdmin();
     }

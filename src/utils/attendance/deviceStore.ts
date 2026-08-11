@@ -11,7 +11,9 @@
  */
 import {
   collection,
+  deleteDoc,
   doc,
+  getDoc,
   getDocs,
   limit,
   orderBy,
@@ -28,6 +30,7 @@ import {
   fetchExistingRecordMap,
   writeRecordsBatch,
 } from './attendanceStore';
+import { logActivity } from '@/utils/activityLog';
 import type { AttendanceDevice, DevicePunch } from './types';
 
 export const DEVICES_COLLECTION = 'devices';
@@ -56,6 +59,10 @@ export async function fetchDevices(): Promise<AttendanceDevice[]> {
 
 export async function renameDevice(sn: string, name: string): Promise<void> {
   await setDoc(doc(db, DEVICES_COLLECTION, sn), { name, updatedAt: nowIso() }, { merge: true });
+  await logActivity({
+    action: 'edit', entity: 'device', entityId: sn,
+    summary: `Renamed device ${sn} to "${name}"`, after: { name },
+  });
 }
 
 export async function blockDevice(sn: string): Promise<void> {
@@ -64,6 +71,11 @@ export async function blockDevice(sn: string): Promise<void> {
     { status: 'blocked', updatedAt: nowIso() },
     { merge: true }
   );
+  await logActivity({
+    action: 'block', entity: 'device', entityId: sn,
+    summary: `Blocked device ${sn} — its punches are now discarded`,
+    after: { status: 'blocked' },
+  });
 }
 
 /**
@@ -84,7 +96,17 @@ export async function approveDevice(
     { merge: true }
   );
 
-  return backfillParkedPunches(sn);
+  const result = await backfillParkedPunches(sn);
+
+  await logActivity({
+    action: 'approve', entity: 'device', entityId: sn,
+    summary:
+      `Approved device ${sn}` +
+      (result.punchesBackfilled ? ` — ${result.punchesBackfilled} held punch(es) added` : ''),
+    after: { status: 'approved', ...result },
+  });
+
+  return result;
 }
 
 /* ------------------------------------------------------------------- punches */
@@ -216,6 +238,42 @@ export async function backfillParkedPunches(
   };
 }
 
+/* ------------------------------------------------------------------ commands */
+
+export const COMMANDS_COLLECTION = 'deviceCommands';
+
+/**
+ * Asks the terminal to upload the names it holds for the given PINs.
+ *
+ * ATTLOG only ever carries a numeric PIN, so without this everyone appears in the app as a
+ * number. The device already knows the names — this queues an ADMS `DATA QUERY USERINFO`
+ * per PIN, which it picks up on its next command poll (within ~30 seconds) and answers
+ * with a USERINFO upload that the ingest handler turns into real names.
+ *
+ * An admin-entered name is never overwritten by the reply; only blanks and placeholders
+ * are filled. Someone who corrected a spelling keeps their correction.
+ */
+export async function requestNamesFromDevice(sn: string, pins: string[]): Promise<number> {
+  const wanted = [...new Set(pins.map((pin) => String(pin).trim()).filter(Boolean))];
+  if (wanted.length === 0) return 0;
+
+  const now = Date.now();
+  const pending = wanted.map((pin, index) => ({
+    // Unique and increasing, so the device's acknowledgements can be matched back.
+    id: String(now + index).slice(-9),
+    command: `DATA QUERY USERINFO PIN=${pin}`,
+    queuedAt: new Date().toISOString(),
+  }));
+
+  await setDoc(
+    doc(db, COMMANDS_COLLECTION, sn),
+    { pending, updatedAt: new Date().toISOString() },
+    { merge: true }
+  );
+
+  return pending.length;
+}
+
 /* -------------------------------------------------------------------- health */
 
 export type DeviceHealth = 'healthy' | 'stale' | 'waiting' | 'pending' | 'blocked' | 'none';
@@ -277,4 +335,30 @@ export function summariseDeviceHealth(
     pending,
     minutesSinceSeen,
   };
+}
+
+/**
+ * Deletes a single raw punch.
+ *
+ * The day record is deliberately NOT recalculated here. A punch and the day it belongs to
+ * are corrected separately: deleting a duplicate press should not silently rewrite someone's
+ * paid hours behind the admin's back. Fix the day on the Records tab, where the change is
+ * visible and is itself logged.
+ */
+export async function deletePunch(punchId: string): Promise<void> {
+  const before = (await getDoc(doc(db, PUNCHES_COLLECTION, punchId))).data() as
+    | Record<string, unknown>
+    | undefined;
+
+  await deleteDoc(doc(db, PUNCHES_COLLECTION, punchId));
+
+  await logActivity({
+    action: 'delete',
+    entity: 'devicePunch',
+    entityId: punchId,
+    summary:
+      `Deleted punch for ${before?.employeeName || before?.userPin || punchId}` +
+      (before?.punchTimeLocal ? ` at ${before.punchTimeLocal}` : ''),
+    before,
+  });
 }

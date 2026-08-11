@@ -2,13 +2,29 @@
  * Salary maths. Pure functions only — no Firestore, no React — so the money logic
  * can be reasoned about and tested in isolation from the UI that displays it.
  */
-import type { AttendanceEmployee, AttendanceRecord } from './types';
+import {
+  DEFAULT_ATTENDANCE_SETTINGS,
+  type AttendanceEmployee,
+  type AttendanceRecord,
+  type AttendanceSettings,
+} from './types';
 
 export interface SalaryBreakdown {
   daysWorked: number;
+  /** Raw time between first and last punch, before the break is taken off. */
   hoursWorked: number;
-  /** Working days in the period, used as the divisor for pro-rated monthly pay. */
+  /** What the employee is actually paid for: hoursWorked minus the unpaid break each day. */
+  paidHours: number;
+  /** Working days in the period — the divisor behind the hourly rate. */
   workingDays: number;
+  /** workingDays x standardHoursPerDay. What a full month looks like. */
+  expectedHours: number;
+  /** salaryAmount / expectedHours. Shown so the number can be checked by hand. */
+  hourlyRate: number;
+  /** Hours worked beyond a full month, paid at the same rate. */
+  overtimeHours: number;
+  /** What the overtime hours are worth. Already included in `amount`. */
+  overtimePay: number;
   amount: number;
   /** True when the employee has no salary mode/amount set yet. */
   needsSetup: boolean;
@@ -33,22 +49,72 @@ export function toDateKey(date: Date): string {
 }
 
 /**
- * Working days between two dates inclusive, excluding Sundays.
- * Sunday-only is the common six-day week for a tailoring shop; excluding Saturday too
- * would inflate the per-day rate for a shop that actually opens on Saturdays.
+ * Working days between two dates inclusive, skipping the shop's weekly off days.
+ *
+ * Defaults to Sunday-only, the common six-day week for a tailoring shop. Excluding
+ * Saturday as well would shrink the divisor and quietly inflate everyone's hourly rate.
  */
-export function countWorkingDays(startDate: string, endDate: string): number {
+export function countWorkingDays(
+  startDate: string,
+  endDate: string,
+  weeklyOffDays: number[] = DEFAULT_ATTENDANCE_SETTINGS.weeklyOffDays
+): number {
   const start = parseDate(startDate);
   const end = parseDate(endDate);
   if (end < start) return 0;
 
+  const off = new Set(weeklyOffDays);
   let count = 0;
   const cursor = new Date(start);
   while (cursor <= end) {
-    if (cursor.getDay() !== 0) count++;
+    if (!off.has(cursor.getDay())) count++;
     cursor.setDate(cursor.getDate() + 1);
   }
   return count;
+}
+
+/**
+ * Paid hours for one day: the punch-to-punch span, minus the unpaid break.
+ *
+ * The break is only taken off when the day is actually longer than it — someone who came
+ * in for a half-hour errand should not end up with negative hours. The deduction happens
+ * here at calculation time rather than being baked into the stored record, so changing the
+ * break length recalculates history instead of corrupting it.
+ */
+export function paidHoursForDay(
+  record: Pick<AttendanceRecord, 'checkIn' | 'checkOut' | 'hoursWorked' | 'punches'>,
+  settings: AttendanceSettings = DEFAULT_ATTENDANCE_SETTINGS
+): number {
+  const punches = (record.punches || []).filter(Boolean).slice().sort();
+
+  /**
+   * Four or more punches means they clocked out for lunch and back in, so the day splits
+   * into real worked segments: (1st→2nd) is the first half, (3rd→4th) the second, and the
+   * gap between them is lunch — excluded exactly, no estimating.
+   *
+   * An odd punch at the end is someone who has not clocked out yet. It is left unpaired
+   * rather than guessed at, so a forgotten evening punch shows as short hours instead of
+   * silently paying for time nobody can account for.
+   */
+  if (punches.length >= 3) {
+    let total = 0;
+    for (let i = 0; i + 1 < punches.length; i += 2) {
+      total += hoursBetween(punches[i], punches[i + 1]);
+    }
+    return round2(total);
+  }
+
+  if (!record.checkIn || !record.checkOut) return 0;
+
+  /**
+   * Two punches only — nobody clocked out for lunch, so the span still contains it.
+   * The configured break is deducted instead. Only when the day is actually longer than
+   * the break: a half-hour errand must not come out negative.
+   */
+  const span = record.hoursWorked || hoursBetween(record.checkIn, record.checkOut);
+  const breakHours = (settings.breakMinutes || 0) / 60;
+
+  return round2(span > breakHours ? span - breakHours : span);
 }
 
 /** Minutes between two 'HH:mm' times, as decimal hours. Returns 0 if either is missing. */
@@ -67,16 +133,17 @@ export function hoursBetween(checkIn?: string, checkOut?: string): number {
 /**
  * Computes what an employee earned over a period from their attendance.
  *
- * - daily   → rate x days present
- * - hourly  → rate x hours actually worked
- * - monthly → salary / working days x days present, capped at the full salary so an
- *             extra Sunday shift cannot pay more than the agreed monthly figure
+ * - daily   → rate x days present, whatever hours they did
+ * - hourly  → rate x paid hours
+ * - monthly → salary converted to an hourly rate, then paid on hours actually worked.
+ *             Hours beyond a full month are overtime at the same rate.
  */
 export function calculateSalary(
   employee: AttendanceEmployee,
   records: AttendanceRecord[],
   periodStart: string,
-  periodEnd: string
+  periodEnd: string,
+  settings: AttendanceSettings = DEFAULT_ATTENDANCE_SETTINGS
 ): SalaryBreakdown {
   const inPeriod = records.filter(
     (record) =>
@@ -89,12 +156,23 @@ export function calculateSalary(
   const hoursWorked = round2(
     inPeriod.reduce((sum, record) => sum + (record.hoursWorked || 0), 0)
   );
-  const workingDays = countWorkingDays(periodStart, periodEnd);
+  const paidHours = round2(
+    inPeriod.reduce((sum, record) => sum + paidHoursForDay(record, settings), 0)
+  );
+
+  const workingDays = countWorkingDays(periodStart, periodEnd, settings.weeklyOffDays);
+  const standardHours = settings.standardHoursPerDay || DEFAULT_ATTENDANCE_SETTINGS.standardHoursPerDay;
+  const expectedHours = round2(workingDays * standardHours);
 
   const base = {
     daysWorked,
     hoursWorked,
+    paidHours,
     workingDays,
+    expectedHours,
+    hourlyRate: 0,
+    overtimeHours: 0,
+    overtimePay: 0,
   };
 
   if (!employee.salaryMode || !employee.salaryAmount || employee.salaryAmount <= 0) {
@@ -109,27 +187,55 @@ export function calculateSalary(
         ...base,
         amount: round2(rate * daysWorked),
         needsSetup: false,
-        formula: `₹${rate}/day × ${daysWorked} day${daysWorked === 1 ? '' : 's'}`,
+        formula: `₹${rate}/day × ${daysWorked} day${daysWorked === 1 ? '' : 's'} present`,
       };
 
     case 'hourly':
       return {
         ...base,
-        amount: round2(rate * hoursWorked),
+        hourlyRate: rate,
+        amount: round2(rate * paidHours),
         needsSetup: false,
-        formula: `₹${rate}/hr × ${hoursWorked} hr${hoursWorked === 1 ? '' : 's'}`,
+        formula: `₹${rate}/hr × ${paidHours} hr worked`,
       };
 
+    /**
+     * Monthly is paid by the hour, derived from the salary.
+     *
+     * The month's salary buys a month's hours, so one hour is worth
+     * salary ÷ (working days × standard hours). Pay then follows the hours actually
+     * worked: arriving late and staying on still earns a full day, leaving early docks
+     * only the hours missed, and hours beyond a full month are paid at the same rate
+     * rather than being given away.
+     */
     case 'monthly': {
-      if (workingDays === 0) {
+      if (expectedHours === 0) {
         return { ...base, amount: 0, needsSetup: false, formula: 'No working days in period' };
       }
-      const prorated = Math.min(round2((rate / workingDays) * daysWorked), rate);
+
+      /**
+       * The multiplication uses the exact rate, not the rounded one.
+       *
+       * ₹10,000 / 208 hrs is ₹48.0769…; rounding that to ₹48.08 before multiplying makes
+       * exactly half a month pay ₹5,000.32 instead of ₹5,000. The rounded figure is only
+       * ever shown, never used in the arithmetic.
+       */
+      const exactRate = rate / expectedHours;
+      const hourlyRate = round2(exactRate);
+      const overtimeHours = round2(Math.max(0, paidHours - expectedHours));
+      const overtimePay = round2(exactRate * overtimeHours);
+      const amount = round2(exactRate * paidHours);
+
       return {
         ...base,
-        amount: prorated,
+        hourlyRate,
+        overtimeHours,
+        overtimePay,
+        amount,
         needsSetup: false,
-        formula: `₹${rate}/month ÷ ${workingDays} working days × ${daysWorked} present`,
+        formula:
+          `₹${rate}/month ÷ ${expectedHours} hrs = ₹${hourlyRate}/hr × ${paidHours} hrs worked` +
+          (overtimeHours > 0 ? ` (incl. ${overtimeHours} hrs overtime)` : ''),
       };
     }
 

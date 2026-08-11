@@ -10,17 +10,22 @@ import AttendanceRecordsTab from '@/components/attendance/AttendanceRecordsTab';
 import EmployeesTab from '@/components/attendance/EmployeesTab';
 import PayrollTab from '@/components/attendance/PayrollTab';
 import PunchesTab from '@/components/attendance/PunchesTab';
+import AttendanceSettingsDialog from '@/components/attendance/AttendanceSettingsDialog';
+import ActivityLogTab from '@/components/attendance/ActivityLogTab';
 import {
+  fetchAttendanceSettings,
   fetchEmployees as fetchAttendanceEmployees,
   fetchRecords,
 } from '@/utils/attendance/attendanceStore';
 import { fetchDevices, fetchPunches } from '@/utils/attendance/deviceStore';
 import { toDateKey } from '@/utils/attendance/salaryCalc';
-import type {
-  AttendanceDevice,
-  AttendanceEmployee,
-  AttendanceRecord,
-  DevicePunch,
+import {
+  DEFAULT_ATTENDANCE_SETTINGS,
+  type AttendanceDevice,
+  type AttendanceEmployee,
+  type AttendanceRecord,
+  type AttendanceSettings,
+  type DevicePunch,
 } from '@/utils/attendance/types';
 
 /**
@@ -64,6 +69,8 @@ const Attendance: React.FC = () => {
   const [staffOptions, setStaffOptions] = useState<{ id: string; name: string }[]>([]);
   const [loading, setLoading] = useState(true);
   const [range, setRange] = useState<QuickRange>('month');
+  const [settings, setSettings] = useState<AttendanceSettings>(DEFAULT_ATTENDANCE_SETTINGS);
+  const [settingsOpen, setSettingsOpen] = useState(false);
 
   // The payroll tab needs its own month, which may sit outside the Records filter.
   // Tracked in a ref so asking for a range never re-triggers the effect that loads it.
@@ -95,12 +102,14 @@ const Attendance: React.FC = () => {
   const loadAll = useCallback(async (silent = false) => {
     if (!silent) setLoading(true);
     try {
-      const [employeeRows, deviceRows] = await Promise.all([
+      const [employeeRows, deviceRows, settingsRow] = await Promise.all([
         fetchAttendanceEmployees(),
         fetchDevices().catch(() => [] as AttendanceDevice[]),
+        fetchAttendanceSettings().catch(() => DEFAULT_ATTENDANCE_SETTINGS),
       ]);
       setEmployees(employeeRows);
       setDevices(deviceRows);
+      setSettings(settingsRow);
       await loadRecords();
     } catch (error) {
       toast({
@@ -179,12 +188,20 @@ const Attendance: React.FC = () => {
 
       <DeviceHealthBar devices={devices} loading={loading} onChanged={loadAll} />
 
+      <AttendanceSettingsDialog
+        open={settingsOpen}
+        onOpenChange={setSettingsOpen}
+        settings={settings}
+        onSaved={setSettings}
+      />
+
       <Tabs defaultValue="records" className="space-y-4">
-        <TabsList className="grid w-full grid-cols-2 sm:w-auto sm:inline-flex md:grid-cols-4">
+        <TabsList className="grid w-full grid-cols-2 sm:w-auto sm:inline-flex md:grid-cols-5">
           <TabsTrigger value="records">Records</TabsTrigger>
           <TabsTrigger value="punches">Punches</TabsTrigger>
           <TabsTrigger value="employees">Employees</TabsTrigger>
           <TabsTrigger value="payroll">Payroll</TabsTrigger>
+          <TabsTrigger value="activity">Activity</TabsTrigger>
         </TabsList>
 
         <TabsContent value="records">
@@ -197,11 +214,21 @@ const Attendance: React.FC = () => {
         </TabsContent>
 
         <TabsContent value="punches">
-          <PunchesTab punches={punches} employees={employees} loading={loading} />
+          <PunchesTab
+            punches={punches}
+            employees={employees}
+            loading={loading}
+            onChanged={loadAll}
+          />
+        </TabsContent>
+
+        <TabsContent value="activity">
+          <ActivityLogTab />
         </TabsContent>
 
         <TabsContent value="employees">
           <EmployeesTab
+            devices={devices}
             employees={employees}
             staffOptions={staffOptions}
             loading={loading}
@@ -214,6 +241,8 @@ const Attendance: React.FC = () => {
             employees={employees}
             allRecords={records}
             onNeedRange={handleNeedRange}
+            settings={settings}
+            onEditSettings={() => setSettingsOpen(true)}
           />
         </TabsContent>
       </Tabs>

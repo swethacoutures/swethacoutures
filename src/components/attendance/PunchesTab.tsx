@@ -18,15 +18,18 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
-import { Download, Fingerprint, LogIn, LogOut, Search } from 'lucide-react';
+import { Download, Fingerprint, LogIn, LogOut, Search, Trash2 } from 'lucide-react';
 import { saveAs } from 'file-saver';
 import { toast } from '@/hooks/use-toast';
+import { deletePunch } from '@/utils/attendance/deviceStore';
 import type { AttendanceEmployee, DevicePunch } from '@/utils/attendance/types';
 
 interface PunchesTabProps {
   punches: DevicePunch[];
   employees: AttendanceEmployee[];
   loading: boolean;
+  /** Reload after a deletion, so the table matches the database. */
+  onChanged: () => void;
 }
 
 /** '2026-08-08' -> '08 Aug 2026' */
@@ -64,7 +67,38 @@ function csvCell(value: unknown): string {
  * The Records tab shows the day summary that payroll uses; this is the evidence behind
  * it. When someone disputes a day, this is where the individual presses are.
  */
-const PunchesTab: React.FC<PunchesTabProps> = ({ punches, employees, loading }) => {
+const PunchesTab: React.FC<PunchesTabProps> = ({ punches, employees, loading, onChanged }) => {
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+
+  const handleDelete = async (punch: DevicePunch) => {
+    if (
+      !window.confirm(
+        `Delete the punch for ${punch.employeeName || punch.userPin} at ${punch.punchTimeLocal}?
+
+` +
+          'The day record on the Records tab is not changed — correct that separately if the ' +
+          'hours are now wrong. This deletion is recorded in the activity log.'
+      )
+    ) {
+      return;
+    }
+
+    setDeletingId(punch.id);
+    try {
+      await deletePunch(punch.id);
+      toast({ title: 'Punch deleted', description: 'Recorded in the activity log.' });
+      onChanged();
+    } catch (error) {
+      toast({
+        title: 'Could not delete',
+        description: error instanceof Error ? error.message : 'Unknown error',
+        variant: 'destructive',
+      });
+    } finally {
+      setDeletingId(null);
+    }
+  };
+
   const [search, setSearch] = useState('');
   const [employeeFilter, setEmployeeFilter] = useState('all');
 
@@ -205,18 +239,19 @@ const PunchesTab: React.FC<PunchesTabProps> = ({ punches, employees, loading }) 
                   <TableHead>Time</TableHead>
                   <TableHead>Type</TableHead>
                   <TableHead>Device</TableHead>
+                  <TableHead className="text-right">Actions</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {loading ? (
                   <TableRow>
-                    <TableCell colSpan={5} className="py-10 text-center text-gray-500">
+                    <TableCell colSpan={6} className="py-10 text-center text-gray-500">
                       Loading punches…
                     </TableCell>
                   </TableRow>
                 ) : filtered.length === 0 ? (
                   <TableRow>
-                    <TableCell colSpan={5} className="py-12 text-center">
+                    <TableCell colSpan={6} className="py-12 text-center">
                       <Fingerprint className="mx-auto mb-3 h-8 w-8 text-gray-400" />
                       <p className="font-medium text-gray-700 dark:text-gray-300">
                         No punches for this period
@@ -268,6 +303,18 @@ const PunchesTab: React.FC<PunchesTabProps> = ({ punches, employees, loading }) 
                       </TableCell>
                       <TableCell className="font-mono text-xs text-gray-500">
                         {punch.deviceSn}
+                      </TableCell>
+                      <TableCell className="text-right">
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          disabled={deletingId === punch.id}
+                          onClick={() => handleDelete(punch)}
+                          title="Delete this punch"
+                          className="text-red-600 hover:text-red-700"
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </Button>
                       </TableCell>
                     </TableRow>
                   ))

@@ -20,6 +20,7 @@ export const COLLECTIONS = {
   rawLogs: 'deviceRawLogs',
   employees: 'attendanceEmployees',
   records: 'attendanceRecords',
+  commands: 'deviceCommands',
 } as const;
 
 /* ---------------------------------------------------------------------- types */
@@ -763,6 +764,84 @@ export async function recordPunches(
   };
 }
 
+/* -------------------------------------------------------------------- commands */
+
+/**
+ * The ADMS command channel.
+ *
+ * ATTLOG carries only a numeric PIN, never a name, so everyone would show up in the app as
+ * a number forever. The protocol's answer is the command queue: the device polls
+ * `/iclock/getrequest`, and anything we return there it executes and reports back on
+ * `/iclock/devicecmd`. Asking it for `DATA QUERY USERINFO` makes it upload the names it
+ * already holds — no LAN access, no second connection, over the same link the punches use.
+ *
+ * The whole queue for a device lives in ONE document (`deviceCommands/{sn}`) rather than a
+ * document per command. That keeps the poll to a single read — and the device polls every
+ * ~16 seconds forever, so a listing query here would be the most expensive thing in the
+ * system by a wide margin.
+ */
+interface QueuedCommand {
+  id: string;
+  command: string;
+  queuedAt: string;
+}
+
+/** Reads and clears the queue, returning the ADMS-formatted command lines. */
+export async function takePendingCommands(
+  store: DocStore,
+  serialNumber: string
+): Promise<string[]> {
+  const id = safeId(serialNumber);
+  const doc = await store.get(COLLECTIONS.commands, id);
+  const pending = Array.isArray(doc?.pending) ? (doc!.pending as QueuedCommand[]) : [];
+  if (pending.length === 0) return [];
+
+  const timestamp = nowIso();
+
+  // Moved to `sent` in the same write that empties `pending`, so a command cannot be
+  // delivered twice if the device re-polls before it has finished executing.
+  await store.set(COLLECTIONS.commands, id, {
+    pending: [],
+    sent: [
+      ...pending.map((command) => ({ ...command, sentAt: timestamp })),
+      ...(Array.isArray(doc?.sent) ? (doc!.sent as unknown[]).slice(0, 40) : []),
+    ].slice(0, 50),
+    updatedAt: timestamp,
+  });
+
+  return pending.map((command) => `C:${command.id}:${command.command}`);
+}
+
+/** Records the device's reply to a command, for the UI to show. */
+export async function recordCommandResult(
+  store: DocStore,
+  serialNumber: string,
+  body: string
+): Promise<string> {
+  // Body looks like `ID=3&Return=0&CMD=DATA`. Return=0 means success.
+  const fields: Record<string, string> = {};
+  for (const pair of String(body || '').split('&')) {
+    const [key, value = ''] = pair.split('=');
+    if (key) fields[key.trim()] = value.trim();
+  }
+
+  const id = safeId(serialNumber);
+  const doc = await store.get(COLLECTIONS.commands, id);
+  const sent = Array.isArray(doc?.sent) ? (doc!.sent as Record<string, unknown>[]) : [];
+
+  await store.set(COLLECTIONS.commands, id, {
+    sent: sent.map((entry) =>
+      entry.id === fields.ID
+        ? { ...entry, result: fields.Return ?? '', completedAt: nowIso() }
+        : entry
+    ),
+    lastResult: `ID=${fields.ID ?? '?'} Return=${fields.Return ?? '?'}`,
+    updatedAt: nowIso(),
+  });
+
+  return fields.ID ? `command ${fields.ID} returned ${fields.Return}` : 'command ack';
+}
+
 /* ------------------------------------------------------------- request handler */
 
 /** The one response the device accepts after data. Anything else starts a retry loop. */
@@ -902,8 +981,26 @@ export async function handleDeviceRequest(
     }
 
     /* ---------------------------------------------------------- command queue */
-    // No commands are ever queued — this integration reads, it does not drive the device.
-    // It still requires a well-formed OK or it retries in a loop.
+    if (path.endsWith('/devicecmd')) {
+      const note = blocked ? 'ignored (blocked)' : await recordCommandResult(store, serialNumber, body);
+      return ok(`${serialNumber}: ${note}`);
+    }
+
+    if (path.endsWith('/getrequest')) {
+      // Only approved devices are ever driven — a queued command to an unapproved
+      // terminal would be us acting on a device we have not yet vouched for.
+      const commands = approved ? await takePendingCommands(store, serialNumber) : [];
+      if (commands.length > 0) {
+        return {
+          status: 200,
+          body: commands.join('\n') + '\n',
+          log: `${serialNumber}: sent ${commands.length} command(s)`,
+        };
+      }
+      // An empty queue must still be a well-formed OK or the device retries in a loop.
+      return ok('');
+    }
+
     return ok(`${serialNumber}: ${path}`);
   } catch (error) {
     const message = (error as Error).message || String(error);

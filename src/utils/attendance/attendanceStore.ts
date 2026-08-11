@@ -21,11 +21,14 @@ import {
 } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 import { hoursBetween } from './salaryCalc';
-import type {
-  AttendanceEmployee,
-  AttendanceRecord,
-  SalaryPayment,
-  SalaryMode,
+import { logActivity } from '@/utils/activityLog';
+import {
+  DEFAULT_ATTENDANCE_SETTINGS,
+  type AttendanceEmployee,
+  type AttendanceRecord,
+  type AttendanceSettings,
+  type SalaryPayment,
+  type SalaryMode,
 } from './types';
 
 export const EMPLOYEES_COLLECTION = 'attendanceEmployees';
@@ -54,13 +57,32 @@ export async function fetchEmployees(): Promise<AttendanceEmployee[]> {
 
 export async function saveEmployee(
   empCode: string,
-  data: Partial<AttendanceEmployee>
+  data: Partial<AttendanceEmployee>,
+  options: { audit?: boolean } = {}
 ): Promise<void> {
+  // Read first so the log can show what the value used to be.
+  const before = options.audit
+    ? ((await getDoc(doc(db, EMPLOYEES_COLLECTION, empCode))).data() as Record<string, unknown>)
+    : undefined;
+
   await setDoc(
     doc(db, EMPLOYEES_COLLECTION, empCode),
     { ...data, empCode, updatedAt: nowIso() },
     { merge: true }
   );
+
+  // Only hand edits are logged. The device feed writes here constantly and would bury
+  // the entries that a human actually needs to find.
+  if (options.audit) {
+    await logActivity({
+      action: 'edit',
+      entity: 'attendanceEmployee',
+      entityId: empCode,
+      summary: `Edited employee ${before?.name || empCode}`,
+      before,
+      after: { ...before, ...data } as Record<string, unknown>,
+    });
+  }
 }
 
 export async function createManualEmployee(input: {
@@ -86,7 +108,19 @@ export async function createManualEmployee(input: {
 }
 
 export async function deleteEmployee(empCode: string): Promise<void> {
+  const before = (await getDoc(doc(db, EMPLOYEES_COLLECTION, empCode))).data() as
+    | Record<string, unknown>
+    | undefined;
+
   await deleteDoc(doc(db, EMPLOYEES_COLLECTION, empCode));
+
+  await logActivity({
+    action: 'delete',
+    entity: 'attendanceEmployee',
+    entityId: empCode,
+    summary: `Deleted employee ${before?.name || empCode}`,
+    before,
+  });
 }
 
 /* -------------------------------------------------------------------- records */
@@ -126,6 +160,9 @@ export async function saveRecordManually(input: {
 }): Promise<void> {
   const id = recordId(input.empCode, input.date);
   const hoursWorked = hoursBetween(input.checkIn, input.checkOut);
+  const before = (await getDoc(doc(db, RECORDS_COLLECTION, id))).data() as
+    | Record<string, unknown>
+    | undefined;
 
   await setDoc(
     doc(db, RECORDS_COLLECTION, id),
@@ -143,10 +180,38 @@ export async function saveRecordManually(input: {
     },
     { merge: true }
   );
+
+  await logActivity({
+    action: before ? 'edit' : 'create',
+    entity: 'attendanceRecord',
+    entityId: id,
+    summary:
+      `${before ? 'Edited' : 'Added'} attendance for ${input.employeeName} on ${input.date}` +
+      ` (${input.checkIn || '—'} to ${input.checkOut || '—'})`,
+    before,
+    after: {
+      checkIn: input.checkIn || '',
+      checkOut: input.checkOut || '',
+      hoursWorked,
+      manuallyEdited: true,
+    },
+  });
 }
 
 export async function deleteRecord(id: string): Promise<void> {
+  const before = (await getDoc(doc(db, RECORDS_COLLECTION, id))).data() as
+    | Record<string, unknown>
+    | undefined;
+
   await deleteDoc(doc(db, RECORDS_COLLECTION, id));
+
+  await logActivity({
+    action: 'delete',
+    entity: 'attendanceRecord',
+    entityId: id,
+    summary: `Deleted attendance for ${before?.employeeName || id} on ${before?.date || '?'}`,
+    before,
+  });
 }
 
 /**
@@ -256,6 +321,14 @@ export async function markPaid(input: {
     revertedAt: '',
     revertedBy: '',
   });
+
+  await logActivity({
+    action: 'pay',
+    entity: 'salaryPayment',
+    entityId: paymentId(input.empCode, input.periodKey),
+    summary: `Marked ${input.employeeName} paid ₹${input.amount} for ${input.periodKey}`,
+    after: { amount: input.amount, daysWorked: input.daysWorked, hoursWorked: input.hoursWorked },
+  });
 }
 
 /**
@@ -267,5 +340,75 @@ export async function undoPayment(empCode: string, periodKey: string, revertedBy
     status: 'reverted',
     revertedAt: nowIso(),
     revertedBy,
+  });
+
+  await logActivity({
+    action: 'undo-pay',
+    entity: 'salaryPayment',
+    entityId: paymentId(empCode, periodKey),
+    summary: `Undid the ${periodKey} payment for ${empCode}`,
+    before: { status: 'paid' },
+    after: { status: 'reverted' },
+  });
+}
+
+/* ------------------------------------------------------------------- settings */
+
+const SETTINGS_DOC = 'attendance';
+
+/**
+ * Shop-wide attendance rules, or the defaults if nobody has set them yet.
+ *
+ * Missing fields fall back individually rather than the whole document falling back, so a
+ * partially-saved document cannot leave `standardHoursPerDay` at zero and divide the
+ * hourly rate by nothing.
+ */
+export async function fetchAttendanceSettings(): Promise<AttendanceSettings> {
+  const snap = await getDoc(doc(db, 'settings', SETTINGS_DOC));
+  if (!snap.exists()) return { ...DEFAULT_ATTENDANCE_SETTINGS };
+
+  const saved = snap.data() as Partial<AttendanceSettings>;
+  return {
+    officeStartTime: saved.officeStartTime || DEFAULT_ATTENDANCE_SETTINGS.officeStartTime,
+    officeEndTime: saved.officeEndTime || DEFAULT_ATTENDANCE_SETTINGS.officeEndTime,
+    standardHoursPerDay:
+      Number(saved.standardHoursPerDay) > 0
+        ? Number(saved.standardHoursPerDay)
+        : DEFAULT_ATTENDANCE_SETTINGS.standardHoursPerDay,
+    breakMinutes:
+      Number.isFinite(Number(saved.breakMinutes)) && Number(saved.breakMinutes) >= 0
+        ? Number(saved.breakMinutes)
+        : DEFAULT_ATTENDANCE_SETTINGS.breakMinutes,
+    weeklyOffDays: Array.isArray(saved.weeklyOffDays)
+      ? saved.weeklyOffDays
+      : DEFAULT_ATTENDANCE_SETTINGS.weeklyOffDays,
+    updatedAt: saved.updatedAt,
+    updatedBy: saved.updatedBy,
+  };
+}
+
+export async function saveAttendanceSettings(
+  settings: AttendanceSettings,
+  updatedBy: string
+): Promise<void> {
+  const before = (await getDoc(doc(db, 'settings', SETTINGS_DOC))).data() as
+    | Record<string, unknown>
+    | undefined;
+
+  await setDoc(
+    doc(db, 'settings', SETTINGS_DOC),
+    { ...settings, updatedAt: nowIso(), updatedBy },
+    { merge: true }
+  );
+
+  // Changing these changes everyone's pay, so it belongs in the audit trail even though
+  // it is not an edit to any one person's record.
+  await logActivity({
+    action: 'settings',
+    entity: 'attendanceSettings',
+    entityId: SETTINGS_DOC,
+    summary: 'Changed the shop working rules',
+    before,
+    after: settings as unknown as Record<string, unknown>,
   });
 }
