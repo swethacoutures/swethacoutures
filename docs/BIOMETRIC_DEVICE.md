@@ -210,7 +210,37 @@ Grey cloud first so Vercel can verify the domain and issue its own certificate. 
 Vercel shows **Valid Configuration**, then edit the record and switch it to
 **Proxied** (orange cloud). Cloudflare only accepts plain HTTP on proxied records.
 
-### 4. Two SSL settings — these are the ones that matter
+### 4. SSL mode, and the setting that does NOT exist
+
+Cloudflare → **SSL/TLS → Overview** → set **Full (strict)**.
+
+Then **SSL/TLS → Edge Certificates** → **Always Use HTTPS → OFF**, and leave **HSTS** off.
+
+⚠️ **Those two are necessary but not sufficient.** Every Cloudflare encryption mode is
+described as "encrypts traffic between Cloudflare and your origin *if the request uses
+HTTPS*". Cloudflare **mirrors the visitor's protocol to the origin** — so a plain-HTTP
+request from the terminal is forwarded to Vercel as plain HTTP, and Vercel replies with its
+own 308 redirect to HTTPS, which the device will not follow. There is no Cloudflare setting
+that means "accept HTTP from the visitor but always use HTTPS to the origin".
+
+That is what `cloudflare-worker/punch-relay.js` is for — see step 5.
+
+### 5. Deploy the Worker
+
+The Worker accepts the device's plain HTTP and makes its own fresh HTTPS request to Vercel,
+breaking the protocol mirroring. Free tier covers it many times over.
+
+1. Cloudflare → **Compute → Workers & Pages → Create → Start with Hello World → Deploy**
+2. Open it → **Edit code** → replace everything with `cloudflare-worker/punch-relay.js`
+   → **Deploy**
+3. Worker → **Settings → Domains & Routes → Add route**
+   - Route: `punch.yourdomain.com/*`
+   - Zone: `yourdomain.com`
+
+Verify with `curl -i "http://punch.yourdomain.com/iclock/cdata?SN=TEST123&options=all"` —
+plain `http://`, and it must return `GET OPTION FROM: TEST123`, not a redirect.
+
+### 6. Old step — two SSL settings (superseded by the above)
 
 Cloudflare → **SSL/TLS**:
 
