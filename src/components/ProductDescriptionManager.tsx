@@ -1,0 +1,960 @@
+import React, { useState, useEffect, useRef } from 'react';
+import { v4 as uuidv4 } from 'uuid';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { NumberInput } from '@/components/ui/number-input';
+import { Label } from '@/components/ui/label';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Plus, Trash2, ChevronDown, ChevronRight, Package, AlertTriangle, Scan, Camera, ShoppingBag } from 'lucide-react';
+import { Checkbox } from '@/components/ui/checkbox';
+import { Product, ProductDescription } from '@/utils/billingUtils';
+import { collection, getDocs, addDoc, deleteDoc, doc } from 'firebase/firestore';
+import { db } from '@/lib/firebase';
+import { toast } from '@/hooks/use-toast';
+import ProductNameInput from '@/components/ProductNameInput';
+import SubItemDescriptionInput from '@/components/SubItemDescriptionInput';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '@/components/ui/dialog';
+import { Html5Qrcode } from 'html5-qrcode';
+
+interface ProductDescriptionManagerProps {
+  products: Product[];
+  onProductsChange: (products: Product[]) => void;
+  onSaveNewEntries?: (saveFunction: () => Promise<{newProductsArray: string[], newDescriptionsArray: string[]}>) => void;
+}
+
+const ProductDescriptionManager: React.FC<ProductDescriptionManagerProps> = ({
+  products,
+  onProductsChange,
+  onSaveNewEntries
+}) => {
+  const [savedDescriptions, setSavedDescriptions] = useState<string[]>([]);
+  const [productNames, setProductNames] = useState<string[]>([]);
+  const [showDeleteModal, setShowDeleteModal] = useState(false);
+  const [deleteItem, setDeleteItem] = useState<{type: 'product' | 'description', value: string} | null>(null);
+  const [deleteConfirmText, setDeleteConfirmText] = useState('');
+  const [showBarcodeScanner, setShowBarcodeScanner] = useState(false);
+  const [isScanning, setIsScanning] = useState(false);
+  const scannerRef = useRef<Html5Qrcode | null>(null);
+
+  // Track new entries that haven't been saved yet
+  const [newProductNames, setNewProductNames] = useState<Set<string>>(new Set());
+  const [newDescriptions, setNewDescriptions] = useState<Set<string>>(new Set());
+
+  // Fetch product names and descriptions dynamically from all bills in Firestore
+  useEffect(() => {
+    fetchDynamicOptionsFromBills();
+  }, []);
+
+  const fetchDynamicOptionsFromBills = async () => {
+    try {
+      // Fetch all bills to aggregate unique product names and descriptions
+      const billsSnapshot = await getDocs(collection(db, 'bills'));
+      const productNamesSet = new Set<string>();
+      const descriptionsSet = new Set<string>();
+      
+      billsSnapshot.docs.forEach(doc => {
+        const bill = doc.data();
+        if (bill.products && Array.isArray(bill.products)) {
+          bill.products.forEach((product: Product) => {
+            // Collect unique product names
+            if (product.name && product.name.trim()) {
+              productNamesSet.add(product.name.trim());
+            }
+            
+            // Collect unique descriptions from all sub-items
+            if (product.descriptions && Array.isArray(product.descriptions)) {
+              product.descriptions.forEach((desc: ProductDescription) => {
+                if (desc.description && desc.description.trim()) {
+                  descriptionsSet.add(desc.description.trim());
+                }
+              });
+            }
+          });
+        }
+      });
+      
+      // Also fetch from master collections for backward compatibility with new entries
+      const descriptionsSnapshot = await getDocs(collection(db, 'descriptions'));
+      descriptionsSnapshot.docs.forEach(doc => {
+        const desc = doc.data().name || doc.data().description;
+        if (desc && desc.trim()) {
+          descriptionsSet.add(desc.trim());
+        }
+      });
+
+      const productsSnapshot = await getDocs(collection(db, 'products'));
+      productsSnapshot.docs.forEach(doc => {
+        const name = doc.data().name;
+        if (name && name.trim()) {
+          productNamesSet.add(name.trim());
+        }
+      });
+      
+      // Convert sets to sorted arrays
+      const uniqueProductNames = Array.from(productNamesSet).sort();
+      const uniqueDescriptions = Array.from(descriptionsSet).sort();
+      
+      setProductNames(uniqueProductNames);
+      setSavedDescriptions(uniqueDescriptions);
+    } catch (error) {
+      console.error('Error fetching dynamic options from bills:', error);
+    }
+  };
+
+  // Function to call when bill is saved - exposed to parent
+  const saveNewEntriesToFirestore = async () => {
+    try {
+      const newProductsArray = Array.from(newProductNames);
+      const newDescriptionsArray = Array.from(newDescriptions);
+      
+      if (newProductsArray.length === 0 && newDescriptionsArray.length === 0) {
+        return; // Nothing to save
+      }
+
+      // Save new product names (case-insensitive dedup so "Stitching"/"stitching" can't both exist)
+      for (const productName of newProductsArray) {
+        const clean = productName.trim();
+        if (clean && !productNames.some(p => p.toLowerCase() === clean.toLowerCase())) {
+          await addDoc(collection(db, 'products'), {
+            name: clean,
+            createdAt: new Date(),
+            usageCount: 1
+          });
+        }
+      }
+
+      // Save new descriptions (case-insensitive dedup)
+      for (const description of newDescriptionsArray) {
+        const clean = description.trim();
+        if (clean && !savedDescriptions.some(d => d.toLowerCase() === clean.toLowerCase())) {
+          await addDoc(collection(db, 'descriptions'), {
+            name: clean,
+            description: clean,
+            createdAt: new Date(),
+            usageCount: 1
+          });
+        }
+      }
+
+      // Refresh the saved data
+      await fetchDynamicOptionsFromBills();
+      
+      // Clear the new entries sets
+      setNewProductNames(new Set());
+      setNewDescriptions(new Set());
+      
+      toast({
+        title: "Success",
+        description: `Saved ${newProductsArray.length} new products and ${newDescriptionsArray.length} new descriptions.`,
+      });
+      
+      return { newProductsArray, newDescriptionsArray };
+    } catch (error) {
+      console.error('Error saving new entries:', error);
+      toast({
+        title: "Error",
+        description: "Failed to save new entries to database.",
+        variant: "destructive",
+      });
+      throw error;
+    }
+  };
+
+  // Expose the save function to parent component
+  useEffect(() => {
+    if (onSaveNewEntries) {
+      onSaveNewEntries(saveNewEntriesToFirestore);
+    }
+  }, [onSaveNewEntries, newProductNames, newDescriptions]);
+
+  // Delete functionality
+  const handleDeleteItem = async () => {
+    if (!deleteItem || deleteConfirmText !== 'DELETE') return;
+
+    try {
+      if (deleteItem.type === 'product') {
+        // Find and delete from products collection
+        const productsSnapshot = await getDocs(collection(db, 'products'));
+        const productDoc = productsSnapshot.docs.find(doc => doc.data().name === deleteItem.value);
+        if (productDoc) {
+          await deleteDoc(doc(db, 'products', productDoc.id));
+        }
+        
+        // TODO: Add ROI cleanup for products
+        // This would involve removing related ROI data from analytics
+        
+        // Remove from local state
+        setProductNames(prev => prev.filter(name => name !== deleteItem.value));
+        
+        toast({
+          title: "Success",
+          description: `Product "${deleteItem.value}" deleted successfully.`,
+        });
+      } else {
+        // Find and delete from descriptions collection
+        const descriptionsSnapshot = await getDocs(collection(db, 'descriptions'));
+        const descDoc = descriptionsSnapshot.docs.find(doc => 
+          doc.data().name === deleteItem.value || doc.data().description === deleteItem.value
+        );
+        if (descDoc) {
+          await deleteDoc(doc(db, 'descriptions', descDoc.id));
+        }
+        
+        // Remove from local state
+        setSavedDescriptions(prev => prev.filter(desc => desc !== deleteItem.value));
+        
+        toast({
+          title: "Success",
+          description: `Description "${deleteItem.value}" deleted successfully.`,
+        });
+      }
+    } catch (error) {
+      console.error('Error deleting item:', error);
+      toast({
+        title: "Error",
+        description: "Failed to delete item.",
+        variant: "destructive",
+      });
+    } finally {
+      setShowDeleteModal(false);
+      setDeleteItem(null);
+      setDeleteConfirmText('');
+    }
+  };
+
+  const addProduct = () => {
+    const newProduct: Product = {
+      id: uuidv4(),
+      name: '',
+      total: 0,
+      descriptions: [],
+      expanded: true
+    };
+    onProductsChange([...products, newProduct]);
+  };
+
+  // Start camera when dialog opens, stop when it closes — same as working_barcode.html
+  useEffect(() => {
+    if (showBarcodeScanner) {
+      // Small delay for Dialog DOM to mount
+      const timer = setTimeout(() => {
+        const html5Qrcode = new Html5Qrcode('barcode-scanner-container');
+        scannerRef.current = html5Qrcode;
+
+        html5Qrcode.start(
+          { facingMode: 'environment' },
+          { fps: 10, qrbox: { width: 250, height: 150 } },
+          (decodedText) => {
+            handleBarcodeDetected(decodedText);
+          },
+          (_errorMessage) => {
+            // Ignore continuous scan errors
+          }
+        ).catch((err) => {
+          console.error('Camera error:', err);
+          toast({
+            title: 'Camera Error',
+            description: 'Unable to access camera. Check permissions and use HTTPS.',
+            variant: 'destructive',
+          });
+        });
+      }, 300);
+
+      return () => clearTimeout(timer);
+    } else {
+      // Stop camera when dialog closes
+      if (scannerRef.current) {
+        scannerRef.current.stop().then(() => {
+          scannerRef.current?.clear();
+          scannerRef.current = null;
+        }).catch(console.error);
+      }
+    }
+  }, [showBarcodeScanner]);
+
+  const handleBarcodeDetected = async (barcodeValue: string) => {
+    if (isScanning) return;
+    setIsScanning(true);
+
+    try {
+      // Stop scanner after successful scan
+      if (scannerRef.current) {
+        await scannerRef.current.stop();
+        scannerRef.current.clear();
+        scannerRef.current = null;
+      }
+
+      // Look up inventory item by barcode
+      const inventorySnapshot = await getDocs(collection(db, 'inventory'));
+      const matchedDoc = inventorySnapshot.docs.find(d => d.data().barcodeValue === barcodeValue.trim());
+
+      if (!matchedDoc) {
+        toast({ title: 'Not Found', description: `No inventory item with barcode: ${barcodeValue}`, variant: 'destructive' });
+        setShowBarcodeScanner(false);
+        return;
+      }
+
+      const itemData = matchedDoc.data();
+      const inventoryId = matchedDoc.id;
+      const itemName = itemData.name || 'Item';
+      const itemRate = itemData.sellingPrice || itemData.costPerUnit || 0;
+      const descText = `${itemData.category || ''} - ${itemData.type || ''}`.trim().replace(/^-\s*|-\s*$/g, '') || itemName;
+
+      let updatedProducts = [...products];
+
+      // If no product exists yet, auto-create one
+      if (updatedProducts.length === 0) {
+        updatedProducts.push({
+          id: uuidv4(),
+          name: itemName,
+          total: 0,
+          descriptions: [],
+          expanded: true,
+        });
+      }
+
+      // Target the first product
+      const targetProduct = updatedProducts[0];
+
+      // Check if this barcode is already a sub-item (duplicate scan → increase qty)
+      const existingDesc = targetProduct.descriptions.find(d => (d as any).barcodeValue === barcodeValue.trim());
+
+      if (existingDesc) {
+        existingDesc.qty += 1;
+        existingDesc.amount = existingDesc.qty * existingDesc.rate;
+      } else {
+        // Add new sub-item
+        targetProduct.descriptions.push({
+          id: uuidv4(),
+          description: descText,
+          qty: 1,
+          rate: itemRate,
+          amount: itemRate,
+          inventoryId,
+          barcodeValue: barcodeValue.trim(),
+        });
+      }
+
+      // Recalculate product total
+      targetProduct.total = targetProduct.descriptions.reduce((sum, d) => sum + d.amount, 0);
+
+      onProductsChange(updatedProducts);
+
+      toast({
+        title: 'Scanned!',
+        description: existingDesc
+          ? `Increased qty of ${descText} to ${existingDesc.qty}`
+          : `Added ${descText} (₹${itemRate})`,
+      });
+
+      setShowBarcodeScanner(false);
+    } catch (error) {
+      console.error('Barcode processing error:', error);
+      toast({ title: 'Error', description: 'Failed to process barcode', variant: 'destructive' });
+      setShowBarcodeScanner(false);
+    } finally {
+      setIsScanning(false);
+    }
+  };
+
+  const removeProduct = (productId: string) => {
+    onProductsChange(products.filter(p => p.id !== productId));
+  };
+
+  const updateProduct = (productId: string, field: keyof Product, value: any) => {
+    const updatedProducts = products.map(product => {
+      if (product.id === productId) {
+        return { ...product, [field]: value };
+      }
+      return product;
+    });
+    onProductsChange(updatedProducts);
+  };
+
+  /**
+   * Marking the whole product as a store sale ticks every sub-item too, so the common case
+   * ("all of this was sold over the counter") is one click — and the admin can then untick
+   * the odd sub-item that was actually stitching work. Unticking the product clears them all.
+   */
+  const toggleProductSale = (productId: string, isSale: boolean) => {
+    const updatedProducts = products.map(product => {
+      if (product.id !== productId) return product;
+      return {
+        ...product,
+        isSale,
+        descriptions: product.descriptions.map(desc => ({ ...desc, isSale })),
+      };
+    });
+    onProductsChange(updatedProducts);
+  };
+
+  /** How many sub-items under a product are currently flagged as a sale. */
+  const saleCount = (product: Product) =>
+    product.descriptions.filter(desc => desc.isSale).length;
+
+  const toggleProductExpansion = (productId: string) => {
+    const updatedProducts = products.map(product => {
+      if (product.id === productId) {
+        return { ...product, expanded: !product.expanded };
+      }
+      return product;
+    });
+    onProductsChange(updatedProducts);
+  };
+
+  const addDescription = (productId: string) => {
+    const updatedProducts = products.map(product => {
+      if (product.id === productId) {
+        const newDescription: ProductDescription = {
+          id: uuidv4(),
+          description: '',
+          qty: 1, // Default to 1 (better usability)
+          rate: 0,
+          amount: 0,
+          // Inherit the parent's sale flag, so adding an item to a product already marked
+          // as a store sale does not silently leave it out of the Sales figures.
+          ...(product.isSale ? { isSale: true } : {}),
+        };
+        return {
+          ...product,
+          descriptions: [...product.descriptions, newDescription],
+          expanded: true // Auto-expand when adding new description
+        };
+      }
+      return product;
+    });
+    onProductsChange(updatedProducts);
+  };
+
+  const removeDescription = (productId: string, descriptionId: string) => {
+    const updatedProducts = products.map(product => {
+      if (product.id === productId) {
+        const updatedDescriptions = product.descriptions.filter(d => d.id !== descriptionId);
+        const total = updatedDescriptions.reduce((sum, desc) => sum + desc.amount, 0);
+        return {
+          ...product,
+          descriptions: updatedDescriptions,
+          total
+        };
+      }
+      return product;
+    });
+    onProductsChange(updatedProducts);
+  };
+
+  const updateDescription = (productId: string, descriptionId: string, field: keyof ProductDescription, value: any) => {
+    const updatedProducts = products.map(product => {
+      if (product.id === productId) {
+        const updatedDescriptions = product.descriptions.map(desc => {
+          if (desc.id === descriptionId) {
+            const updatedDesc = { ...desc, [field]: value };
+            
+            // Special handling for quantity field
+            if (field === 'qty') {
+              // Ensure quantity is valid and defaults to 1 if invalid
+              const qtyValue = typeof value === 'number' && value >= 0.1 ? value : 1;
+              updatedDesc.qty = qtyValue;
+            }
+            
+            // Auto-calculate amount only when both qty and rate have valid positive values
+            if (field === 'qty' || field === 'rate') {
+              const finalQty = field === 'qty' ? updatedDesc.qty : desc.qty;
+              const finalRate = field === 'rate' ? (value || 0) : desc.rate;
+              
+              // Only calculate amount if both values are valid and positive
+              if (finalQty > 0 && finalRate > 0) {
+                updatedDesc.amount = finalQty * finalRate;
+              } else {
+                // Set amount to 0 if either value is invalid/empty/zero
+                updatedDesc.amount = 0;
+              }
+            }
+            
+            return updatedDesc;
+          }
+          return desc;
+        });
+        
+        // Recalculate product total
+        const total = updatedDescriptions.reduce((sum, desc) => sum + desc.amount, 0);
+        
+        return {
+          ...product,
+          descriptions: updatedDescriptions,
+          total
+        };
+      }
+      return product;
+    });
+    onProductsChange(updatedProducts);
+  };
+
+  const handleDescriptionSelect = (productId: string, descriptionId: string, selectedDescription: string) => {
+    // Only process if the selected description is different from current value
+    const product = products.find(p => p.id === productId);
+    const currentDesc = product?.descriptions.find(d => d.id === descriptionId);
+    
+    if (currentDesc && currentDesc.description === selectedDescription) {
+      return; // No change needed
+    }
+    
+    // Track if this is a new description and add it to the options list
+    if (!savedDescriptions.includes(selectedDescription) && selectedDescription.trim()) {
+      setNewDescriptions(prev => new Set([...prev, selectedDescription]));
+      setSavedDescriptions(prev => [...prev, selectedDescription]);
+    }
+    updateDescription(productId, descriptionId, 'description', selectedDescription);
+  };
+
+  const handleProductNameSelect = (productId: string, selectedName: string) => {
+    // Only process if the selected name is different from current value
+    const product = products.find(p => p.id === productId);
+    
+    if (product && product.name === selectedName) {
+      return; // No change needed
+    }
+    
+    // Track if this is a new product name and add it to the options list
+    if (!productNames.includes(selectedName) && selectedName.trim()) {
+      setNewProductNames(prev => new Set([...prev, selectedName]));
+      setProductNames(prev => [...prev, selectedName]);
+    }
+    updateProduct(productId, 'name', selectedName);
+  };
+
+  // Calculate grand total of all products and notify parent when it changes
+  useEffect(() => {
+    const grandTotal = products.reduce((sum, product) => sum + product.total, 0);
+    // Force a re-render of parent component calculations by calling onProductsChange
+    // This ensures the bill summary updates when product totals change
+    if (products.length > 0) {
+      onProductsChange([...products]);
+    }
+  }, [products.map(p => p.total).join(','), products.length]);
+
+  return (
+    <div className="space-y-4">
+      {/* Sticky Action Bar */}
+      <div className="sticky top-4 bg-white border-2 border-purple-200 rounded-lg p-4 shadow-lg z-10">
+        <div className="flex flex-col sm:flex-row items-center justify-between gap-4">
+          <div className="flex flex-wrap items-center gap-2">
+            <Package className="h-5 w-5 text-purple-600" />
+            <h2 className="text-lg font-semibold text-gray-900 dark:text-gray-100">Products & Services</h2>
+            <span className="text-sm text-gray-500 dark:text-gray-400">({products.length} products)</span>
+          </div>
+          <div className="flex flex-wrap items-center gap-2 justify-center sm:justify-end w-full sm:w-auto">
+            <Button
+              type="button"
+              onClick={addProduct}
+              className="bg-gradient-to-r from-purple-600 to-blue-600 hover:from-purple-700 hover:to-blue-700 text-white"
+              size="sm"
+            >
+              <Plus className="h-4 w-4 mr-2" />
+              Add Product
+            </Button>
+            <Button
+              type="button"
+              onClick={() => setShowBarcodeScanner(true)}
+              className="bg-gradient-to-r from-green-600 to-teal-600 hover:from-green-700 hover:to-teal-700 text-white"
+              size="sm"
+            >
+              <Scan className="h-4 w-4 mr-2" />
+              Scan Barcode
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => {
+                // Navigate back to billing page
+                const currentPath = window.location.pathname;
+                if (currentPath.includes('/billing/')) {
+                  // If we're in a billing route, go back to billing dashboard
+                  window.location.href = '/billing';
+                } else {
+                  // Otherwise, use browser back
+                  window.history.back();
+                }
+              }}
+              size="sm"
+              className="border-gray-300 text-gray-700 hover:bg-gray-50 dark:bg-gray-800/50"
+            >
+              Back to Billing
+            </Button>
+          </div>
+        </div>
+      </div>
+
+      <Card>
+        <CardHeader className="pb-4">
+          <CardTitle className="flex items-center gap-2">
+            <Package className="h-5 w-5" />
+            Product Details
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          {products.length === 0 ? (
+            <div className="text-center py-8 text-gray-500 dark:text-gray-400">
+              <Package className="h-12 w-12 mx-auto mb-3 text-gray-400" />
+              <p>No products added yet. Click "Add Product" in the action bar above to get started.</p>
+            </div>
+          ) : (
+            products.map((product, productIndex) => (
+              <div key={product.id} className="border-2 border-purple-200 rounded-lg bg-white shadow-sm">
+                {/* Header Panel - Main Product */}
+                <div className="p-4 bg-purple-50 border-b border-purple-200">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-12 gap-4 items-center">
+                      {/* Serial Number */}
+                      <div className="sm:col-span-1 lg:col-span-1 flex justify-center">
+                        <div className="w-8 h-8 bg-purple-600 text-white rounded-full flex items-center justify-center font-semibold text-sm">
+                          {productIndex + 1}
+                        </div>
+                      </div>
+                      
+                      {/* Chevron Toggle */}
+                      <div className="sm:col-span-1 lg:col-span-1 flex justify-center">
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => toggleProductExpansion(product.id)}
+                          className="p-2 hover:bg-purple-100"
+                        >
+                          {product.expanded ? (
+                            <ChevronDown className="h-4 w-4 text-purple-600" />
+                          ) : (
+                            <ChevronRight className="h-4 w-4 text-purple-600" />
+                          )}
+                        </Button>
+                      </div>                      {/* Product Name */}
+                      <div className="sm:col-span-2 lg:col-span-5">
+                        <Label className="text-sm font-medium text-gray-700 dark:text-gray-300">Product Name *</Label>
+                        <ProductNameInput
+                          value={product.name}
+                          onChange={(value) => handleProductNameSelect(product.id, value)}
+                          options={productNames}
+                          placeholder="Type or select product name..."
+                          className="mt-1 bg-white w-full"
+                          required
+                        />
+                      </div>
+
+                  {/* Total Amount */}
+                  <div className="sm:col-span-1 lg:col-span-3">
+                    <Label className="text-sm font-medium text-gray-700 dark:text-gray-300">Total (₹)</Label>
+                    <div className="mt-1 p-2 bg-white border border-gray-200 rounded-md">
+                      <span className="font-semibold text-purple-600">
+                        ₹{product.total.toFixed(2)}
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Add Sub-Item & Delete buttons */}
+                  <div className="sm:col-span-2 lg:col-span-2 flex justify-end gap-2">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={() => addDescription(product.id)}
+                      className="text-blue-600 border-blue-200 hover:bg-blue-50"
+                    >
+                      <Plus className="h-4 w-4" />
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={() => removeProduct(product.id)}
+                      className="text-red-600 border-red-200 hover:bg-red-50"
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </Button>
+                  </div>
+                </div>
+
+                {/* Store-sale flag — feeds the Sales category in ROI Analytics */}
+                <div className="mt-3 flex flex-wrap items-center gap-2">
+                  <label className="flex w-fit cursor-pointer items-center gap-2 rounded-md border border-amber-200 bg-white px-2.5 py-1.5 text-xs font-medium text-amber-800 hover:bg-amber-50 dark:border-amber-800 dark:bg-gray-900 dark:text-amber-300">
+                    <Checkbox
+                      checked={!!product.isSale}
+                      onCheckedChange={(checked) => toggleProductSale(product.id, checked === true)}
+                    />
+                    <ShoppingBag className="h-3.5 w-3.5" />
+                    Sold from store (counts as a Sale)
+                  </label>
+                  {product.descriptions.length > 0 && saleCount(product) > 0 && (
+                    <span className="text-xs text-amber-700 dark:text-amber-400">
+                      {saleCount(product)} of {product.descriptions.length} item
+                      {product.descriptions.length === 1 ? '' : 's'} marked · untick any below that
+                      isn't a sale
+                    </span>
+                  )}
+                </div>
+              </div>
+
+              {/* Expanded Panel - Sub-Items (Descriptions) */}
+              {product.expanded && (
+                <div className="p-4 space-y-3">
+                  {product.descriptions.length === 0 ? (
+                    <div className="text-center py-4 text-gray-500 bg-gray-50 rounded-lg">
+                      <p className="text-sm">No items added yet. Click the "+" button above to add an item.</p>
+                    </div>
+                  ) : (
+                    product.descriptions.map((desc, descIndex) => (
+                      <div key={desc.id} className="border border-gray-200 rounded-lg p-3 bg-gray-50 dark:bg-gray-800/50">
+                        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-12 gap-3 items-end">
+                          {/* Sub-Item Serial Number */}
+                          <div className="sm:col-span-1 lg:col-span-1 flex items-center justify-center">
+                            <div className="w-6 h-6 bg-gray-50 dark:bg-gray-800/500 text-white rounded-full flex items-center justify-center text-xs font-medium">
+                              {descIndex + 1}
+                            </div>
+                          </div>
+
+                          {/* Description */}
+                          <div className="sm:col-span-2 lg:col-span-4">
+                            <Label className="text-sm font-medium text-gray-700 dark:text-gray-300">Sub-Item Description *</Label>
+                            <SubItemDescriptionInput
+                              value={desc.description}
+                              onChange={(value) => handleDescriptionSelect(product.id, desc.id, value)}
+                              options={savedDescriptions}
+                              placeholder="Type or select description..."
+                              className="mt-1 bg-white w-full"
+                              required
+                            />
+                          </div>
+
+                          {/* Quantity */}
+                          <div className="sm:col-span-1 lg:col-span-2">
+                            <Label className="text-sm font-medium text-gray-700 dark:text-gray-300">Qty *</Label>
+                            <NumberInput
+                              value={desc.qty}
+                              onChange={(value) => {
+                                // Handle quantity field: always default to 1 when empty, allow any valid number >= 0.1
+                                if (value === null || value === undefined) {
+                                  updateDescription(product.id, desc.id, 'qty', 1);
+                                } else {
+                                  updateDescription(product.id, desc.id, 'qty', value);
+                                }
+                              }}
+                              min={0.1}
+                              step={0.1}
+                              decimals={1}
+                              allowEmpty={false}
+                              emptyValue={1}
+                              className="mt-1 bg-white dark:bg-gray-900"
+                              placeholder="1"
+                              required
+                            />
+                          </div>
+
+                          {/* Rate */}
+                          <div className="sm:col-span-1 lg:col-span-2">
+                            <Label className="text-sm font-medium text-gray-700 dark:text-gray-300">Rate (₹) *</Label>
+                            <NumberInput
+                              value={desc.rate === 0 ? '' : desc.rate}
+                              onChange={(value) => updateDescription(product.id, desc.id, 'rate', value || 0)}
+                              min={0}
+                              step={0.01}
+                              decimals={2}
+                              allowEmpty={false}
+                              emptyValue={0}
+                              className="mt-1 bg-white dark:bg-gray-900"
+                              placeholder="Rate"
+                              required
+                            />
+                          </div>
+
+                          {/* Amount */}
+                          <div className="sm:col-span-1 lg:col-span-2">
+                            <Label className="text-sm font-medium text-gray-700 dark:text-gray-300">Amount (₹)</Label>
+                            <div className="mt-1 p-2 bg-white border border-gray-200 rounded-md">
+                              <span className="font-semibold text-green-700">
+                                ₹{desc.amount.toFixed(2)}
+                              </span>
+                            </div>
+                          </div>
+
+                          {/* Delete button */}
+                          <div className="sm:col-span-1 lg:col-span-1">
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="sm"
+                              onClick={() => removeDescription(product.id, desc.id)}
+                              className="w-full text-red-600 border-red-200 hover:bg-red-50 mt-6"
+                            >
+                              <Trash2 className="h-4 w-4" />
+                            </Button>
+                          </div>
+                        </div>
+
+                        {/* Per-item store-sale flag — always available, so an item can be
+                            unticked even when the whole product was marked as a sale. */}
+                        <label
+                          className={`mt-3 flex w-fit cursor-pointer items-center gap-2 rounded-md border px-2.5 py-1 text-xs font-medium ${
+                            desc.isSale
+                              ? 'border-amber-300 bg-amber-50 text-amber-800 dark:border-amber-700 dark:bg-amber-950/40 dark:text-amber-300'
+                              : 'border-gray-200 bg-white text-gray-600 hover:bg-amber-50 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-400'
+                          }`}
+                        >
+                          <Checkbox
+                            checked={!!desc.isSale}
+                            onCheckedChange={(checked) =>
+                              updateDescription(
+                                product.id,
+                                desc.id,
+                                'isSale' as keyof ProductDescription,
+                                checked === true
+                              )
+                            }
+                          />
+                          <ShoppingBag className="h-3.5 w-3.5" />
+                          Sold from store
+                        </label>
+                      </div>
+                    ))
+                  )}
+                  
+                  {/* Add Item button at bottom of expanded panel */}
+                  <div className="pt-2">
+                    <Button
+                      type="button"
+                      onClick={() => addDescription(product.id)}
+                      variant="outline"
+                      size="sm"
+                      className="w-full flex items-center gap-2 text-blue-600 border-blue-200 hover:bg-blue-50"
+                    >
+                      <Plus className="h-4 w-4" />
+                      Add Item
+                    </Button>
+                  </div>
+                </div>
+              )}
+            </div>
+          ))
+          )}
+        </CardContent>
+      </Card>
+
+      {/* Delete Confirmation Dialog */}
+      <Dialog open={showDeleteModal} onOpenChange={setShowDeleteModal}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <AlertTriangle className="h-5 w-5 text-red-500" />
+              Confirm Deletion
+            </DialogTitle>
+            <DialogDescription>
+              Are you sure you want to delete the {deleteItem?.type} "{deleteItem?.value}"?
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div className="p-4 bg-red-50 border border-red-200 rounded-md">
+              <div className="flex items-start gap-3">
+                <AlertTriangle className="h-5 w-5 text-red-500 mt-0.5" />
+                <div>
+                  <h4 className="font-medium text-red-800">Warning</h4>
+                  <p className="text-sm text-red-700 mt-1">
+                    This action cannot be undone. The {deleteItem?.type} will be permanently removed from the database.
+                    {deleteItem?.type === 'product' && ' All associated ROI data will also be cleaned up.'}
+                  </p>
+                </div>
+              </div>
+            </div>
+            <p className="text-sm text-gray-600 dark:text-gray-400">
+              Type <strong>DELETE</strong> to confirm this action:
+            </p>
+            <Input
+              placeholder="Type DELETE to confirm"
+              value={deleteConfirmText}
+              onChange={(e) => setDeleteConfirmText(e.target.value)}
+              className="font-mono"
+            />
+          </div>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => {
+                setShowDeleteModal(false);
+                setDeleteItem(null);
+                setDeleteConfirmText('');
+              }}
+            >
+              Cancel
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={handleDeleteItem}
+              disabled={deleteConfirmText !== 'DELETE'}
+            >
+              Delete {deleteItem?.type}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Barcode Scanner Dialog */}
+      <Dialog open={showBarcodeScanner} onOpenChange={(open) => {
+        if (!open) {
+          // Camera stop is handled by the useEffect cleanup
+        }
+        setShowBarcodeScanner(open);
+      }}>
+        <DialogContent className="sm:max-w-2xl">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Camera className="h-5 w-5 text-green-600" />
+              Scan Inventory Barcode
+            </DialogTitle>
+            <DialogDescription>
+              Point the barcode at your camera. It will be detected automatically.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            {/* Scanner Container — camera renders here */}
+            <div className="relative">
+              <div 
+                id="barcode-scanner-container" 
+                className="w-full rounded-lg overflow-hidden border-2 border-green-300"
+                style={{ minHeight: '250px' }}
+              ></div>
+              
+              {isScanning && (
+                <div className="absolute inset-0 bg-white dark:bg-gray-900/80 flex items-center justify-center rounded-lg">
+                  <div className="text-center">
+                    <div className="h-12 w-12 mx-auto mb-3 border-4 border-green-600 border-t-transparent rounded-full animate-spin"></div>
+                    <p className="text-green-800 font-medium">Processing barcode...</p>
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => setShowBarcodeScanner(false)}
+              disabled={isScanning}
+            >
+              Cancel
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Floating Add Product Button - Shows when scrolled down */}
+      {products.length > 0 && (
+        <div className="fixed bottom-6 right-6 z-50">
+          <Button
+            type="button"
+            onClick={addProduct}
+            className="bg-gradient-to-r from-purple-600 to-blue-600 hover:from-purple-700 hover:to-blue-700 text-white shadow-lg hover:shadow-xl transition-all duration-200 rounded-full w-14 h-14 p-0"
+            title="Add Another Product"
+          >
+            <Plus className="h-6 w-6" />
+          </Button>
+        </div>
+      )}
+    </div>
+  );
+};
+
+export default ProductDescriptionManager;

@@ -1,0 +1,6 @@
+{
+  "rewrites": [
+    { "source": "/iclock/:path*", "destination": "/api/iclock/cdata" },
+    { "source": "/(.*)", "destination": "/" }
+  ]
+}
