@@ -1,6 +1,6 @@
 import React from 'react';
 import { BrowserRouter as Router, Route, Routes } from 'react-router-dom';
-import Index from './pages/Index';
+import Landing from './pages/Landing';
 import Login from './pages/Login';
 import AdminDashboard from './pages/AdminDashboard';
 import Expenses from './pages/Expenses';
@@ -40,8 +40,16 @@ function App() {
       <BusinessSettingsProvider>
         <div className="min-h-screen bg-gray-50 dark:bg-gray-800/50">
           <Routes>
-            <Route path="/" element={<Index />} />
+            {/* The public website. Everything below it is the back office. */}
+            <Route path="/" element={<Landing />} />
+
+            {/*
+              Staff sign-in lives at /admin. /login stays as an alias so old bookmarks,
+              and anything that still links to it, keep working.
+            */}
+            <Route path="/admin" element={<Login />} />
             <Route path="/login" element={<Login />} />
+
             {/* Public route for viewing shared bills - no authentication required */}
             <Route path="/view-bill/:token" element={<PublicBillView />} />
             <Route
@@ -54,8 +62,13 @@ function App() {
                 </ProtectedRoute>
               }
             />
+            {/*
+              The admin dashboard itself. It used to sit on /admin, which is now the sign-in
+              page; /dashboard renders the same component through DashboardRouter, so this is
+              only kept for links that pointed straight at it.
+            */}
             <Route
-              path="/admin"
+              path="/admin/dashboard"
               element={
                 <ProtectedRoute adminOnly>
                   <Layout>

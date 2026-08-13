@@ -1,7 +1,86 @@
 # PRESENT — Current State of the System
 
 > Snapshot of how the app is built and what exists RIGHT NOW.
-> Last verified: 2026-08-07.
+> Last verified: 2026-08-13.
+
+## 0aa. 2026-08-13 — the app has a public website, and /admin is the staff door
+
+- **`/` is now a real website**, not a redirect into the dashboard. `src/pages/Landing.tsx`
+  plus `src/components/landing/` and `src/styles/landing.css`. Header, hero, atelier/about,
+  services, products, process, visit/CTA, footer, and a Book Appointment dialog.
+- **The copy is not invented.** `landingContent.ts` was written from the shop's own data:
+  services are the sub-item descriptions on 362 real bills (Stitching 794×, lining 512×,
+  fabric 434×, dye 336×, saree tassels 200×, embroidery 172×, falls, lace, alterations),
+  products are the most common bill product names (blouse, dress, saree, lehenga, dupatta,
+  frock), and the "from ₹" figures are the shop's own `settings/workDescriptions` rates.
+  Contact details come from `settings/business`. **Keep it that way** — if the offering
+  changes, edit `landingContent.ts` rather than scattering claims through the markup.
+- **No photography, deliberately.** There are no images of this shop's work, and stock
+  photos of someone else's garments would be a lie told in pictures. The visual language is
+  drawn line-art (`ornaments.tsx`) plus paper grain and a running-stitch motif.
+- **Booking goes to WhatsApp, not Firestore.** Every collection denies unauthenticated
+  writes, and opening one so strangers could create records is a bad trade. The form
+  composes a message and hands it to `wa.me/919959494567`.
+- **Styling is scoped to `.atelier`** so the marketing site's fonts/colours never leak into
+  the admin app, and the page suspends the `dark` class while mounted — a customer's
+  brochure must not go dark because the owner flipped a switch in the back office.
+  ⚠️ **Headings and `.eyebrow` deliberately set no colour in landing.css.** `.atelier h2`
+  outranks a Tailwind `text-[…]` utility, which rendered the Services and Visit headings
+  black-on-black. Colour is set per usage.
+- **Reveal-on-scroll is NOT an IntersectionObserver** (`Reveal.tsx`). The observer only
+  fires when an element *crosses* a threshold in a sampled frame; scroll more than a
+  viewport in one flick and an element goes from below the fold to above it without ever
+  being sampled, staying at `opacity: 0` forever. Reproduced on a phone — two blocks of the
+  Atelier section never appeared. It is now one rAF-throttled scroll listener doing a plain
+  `rect.top < innerHeight` test, which is true whether you crept or flew past. Regression
+  test: jump to the bottom, assert no `.reveal` is still transparent.
+- **Routing:** `/` → Landing, **`/admin` → Login** (`/login` kept as an alias), and the admin
+  dashboard moved off `/admin` to `/admin/dashboard` (`/dashboard` already rendered it).
+  `ProtectedRoute` and logout now send you to `/admin`.
+- **🔴 The login page was a wide-open door and is now shut.** It had "Quick Login" buttons
+  that typed the owner's real email and password into the form, and a "Create Admin User"
+  button calling `createAdminUser()`, which minted `swetha@gmail.com` with that same string
+  as the password. Anyone who loaded the page owned the business. Both are gone, and
+  `createAdminUser` was deleted from `AuthContext` so it cannot be re-wired.
+
+## 0ab. 2026-08-13 — attendance correctness
+
+- **🔴 Repeat presses were destroying paid hours.** `paidHoursForDay` paired punches as
+  in/out/in/out, so the shop's real 10 Aug record — sixteen punches between 17:47 and 19:27,
+  one person pressing repeatedly — was read as eight tiny shifts worth ~0.3 h instead of a
+  1h40 evening. Punches within `minPunchGapMinutes` (default 5) of the previous kept one are
+  now discarded first, and time away only comes off the day when it lasted at least
+  `minBreakMinutes` (default 20). Both are in `settings/attendance` and editable from
+  Payroll → Working rules. Verified against live data: employee 2's August went 0.3 h → 6.25 h.
+- **🔴 A hand correction did nothing to the payslip.** `saveRecordManually` merges, so the
+  original `punches` array survives an edit, and `paidHoursForDay` read punches before
+  check-in/check-out. The corrected times showed in the table and changed no money.
+  `manuallyEdited` now wins outright.
+- **Undo on Payroll** uses `setDoc(merge)` rather than `updateDoc` (which throws if the doc
+  is missing — the worst moment to be strict), flips the row optimistically so a slow
+  connection cannot make a successful undo look failed, asks for confirmation, and leaves an
+  "Undone — was ₹x" note so the correction stays visible. Marking paid again afterwards works.
+- **Delete all** on Records and Punches (`BulkDeleteDialog`): states the count and period,
+  offers "only what is shown" vs "everything in <period>", and requires typing DELETE. One
+  audit entry per bulk operation, not one per row — otherwise a clear-out buries every
+  individual correction the log exists to preserve.
+- **`firestore.rules` said `devicePunches: delete: if false`** while the Punches tab offered
+  a delete button, so that button could only ever fail. Admin delete is now allowed; create
+  stays denied (a punch a human can *write* is attendance out of thin air).
+- **🔴 Adding an employee with an email logged the admin out.**
+  `createUserWithEmailAndPassword` does not just create an account, it **signs it in**. The
+  admin was silently swapped for the brand-new staff user, admin reads started failing and
+  the next navigation bounced them to the staff dashboard. `createLoginForOtherUser()` in
+  `lib/firebase.ts` now does it on a throwaway secondary Firebase app.
+- **Linking the two employee lists now works from both ends.** The attendance-side dialog
+  offers "Link to staff member" when *adding*, not only when editing (and fills the name in
+  from the choice); `linkEmployeeToStaff` writes both `attendanceEmployees.linkedStaffId` and
+  `staff.attendanceEmpCode`, because `matchAttendanceEmployee` checks the staff side first;
+  deleting an attendance employee clears the staff pointer; and the Staff page now calls
+  `syncPayToAttendance` when *creating* someone, not only when editing.
+- Payroll/settings copy that still claimed pay was "capped at the full salary" was corrected —
+  overtime has been paid since 2026-08-11.
+- **Tests:** `npm run test:salary` is 41 checks (was 31), including the real 16-punch day.
 
 ## 0. 2026-08-07 change set (read this first)
 
@@ -257,10 +336,11 @@ Scripts: `npm run dev`, `npm run build`, `npm run lint`, plus `diagnose-bills` /
 ## 3. Routing / page map (`src/App.tsx`)
 
 Public:
-- `/` → `Index` (landing) · `/login` → `Login` · `/view-bill/:token` → `PublicBillView` (no auth — share link)
+- `/` → `Landing` (the public website) · `/admin` → `Login` (`/login` is an alias) ·
+  `/view-bill/:token` → `PublicBillView` (no auth — share link)
 
 Admin (role=admin):
-- `/dashboard` → `DashboardRouter` → `AdminDashboard`
+- `/dashboard` → `DashboardRouter` → `AdminDashboard` (also at `/admin/dashboard`)
 - `/orders`, `/customers`, `/billing`, `/billing/new`, `/billing/new/:orderId`, `/billing/:billId`,
   `/billing/:billId/edit`, `/inventory`, `/staff`, `/appointments`, `/alterations`, `/reports`,
   `/settings`, `/expenses`, `/admin/expenses`, `/income-expenses`, `/roi-analytics`

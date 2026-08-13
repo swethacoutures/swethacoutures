@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useEffect, useState } from 'react';
-import { User, signInWithEmailAndPassword, signOut, onAuthStateChanged, createUserWithEmailAndPassword } from 'firebase/auth';
+import { User, signInWithEmailAndPassword, signOut, onAuthStateChanged } from 'firebase/auth';
 import { doc, getDoc, setDoc } from 'firebase/firestore';
 import { setActivityActor } from '@/utils/activityLog';
 import { auth, db } from '@/lib/firebase';
@@ -19,7 +19,6 @@ interface AuthContextType {
   loading: boolean;
   login: (email: string, password: string) => Promise<void>;
   logout: () => Promise<void>;
-  createAdminUser: () => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -91,37 +90,15 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     return unsubscribe;
   }, []);
 
-  const createAdminUser = async () => {
-    try {
-      // Create admin user in Firebase Auth
-      const userCredential = await createUserWithEmailAndPassword(auth, 'swetha@gmail.com', 'swetha@gmail.com');
-      
-      // Create user document in Firestore
-      await setDoc(doc(db, 'users', userCredential.user.uid), {
-        role: 'admin',
-        name: 'Swetha'
-      });
-
-      toast({
-        title: "Admin User Created",
-        description: "Admin account has been successfully created",
-      });
-    } catch (error: any) {
-      console.error('Error creating admin user:', error);
-      if (error.code === 'auth/email-already-in-use') {
-        toast({
-          title: "User Already Exists",
-          description: "Admin user already exists in the system",
-        });
-      } else {
-        toast({
-          title: "Error Creating Admin",
-          description: error.message,
-          variant: "destructive",
-        });
-      }
-    }
-  };
+  /**
+   * There is deliberately no `createAdminUser` here any more.
+   *
+   * It used to create `swetha@gmail.com` with that same string as the password, and the
+   * login page exposed it as a button to anyone who loaded the page. Combined with the
+   * "Quick Login" buttons that typed the credentials in for you, the entire business —
+   * every bill, customer and rupee — was one click away for any visitor. Admin accounts
+   * are now created only from the Firebase console or by an existing admin.
+   */
 
   const login = async (email: string, password: string) => {
     try {
@@ -171,8 +148,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     userData,
     loading,
     login,
-    logout,
-    createAdminUser
+    logout
   };
 
   return (

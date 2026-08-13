@@ -25,7 +25,9 @@ const ProtectedRoute: React.FC<ProtectedRouteProps> = ({
   }
 
   if (!user) {
-    return <Navigate to="/login" replace />;
+    // /admin is the sign-in page. Sending people to the public site instead would leave
+    // an admin who typed a deep link with no obvious way to get to the login box.
+    return <Navigate to="/admin" replace />;
   }
 
   if (adminOnly && userData?.role !== 'admin') {

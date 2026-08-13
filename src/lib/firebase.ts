@@ -41,3 +41,38 @@ export const auth = getAuth(app);
 export const db = getFirestore(app);
 export const storage = getStorage(app);
 export default app;
+
+/**
+ * Creates a login for someone else without losing your own.
+ *
+ * `createUserWithEmailAndPassword` does not just create an account — it **signs that account
+ * in**, replacing the current session. So an admin adding an employee with an email address
+ * was silently logged out and logged back in as the brand-new staff user: the Employees page
+ * would start failing on admin-only reads, and the next navigation bounced them to the staff
+ * dashboard. It looked like a random crash and the cause was two lines away.
+ *
+ * The fix is the standard one: do the creation on a second, throwaway Firebase app instance
+ * with its own auth state. The primary session is never touched. The instance is signed out
+ * and deleted afterwards so it cannot linger and restore itself on the next page load.
+ */
+export async function createLoginForOtherUser(
+  email: string,
+  password: string
+): Promise<{ uid: string }> {
+  const { deleteApp } = await import('firebase/app');
+  const { getAuth: getSecondaryAuth, createUserWithEmailAndPassword, signOut } = await import(
+    'firebase/auth'
+  );
+
+  // A unique name each time — reusing one would throw if a previous call left it behind.
+  const secondary = initializeApp(firebaseConfig, `staff-provisioning-${Date.now()}`);
+  const secondaryAuth = getSecondaryAuth(secondary);
+
+  try {
+    const credential = await createUserWithEmailAndPassword(secondaryAuth, email, password);
+    return { uid: credential.user.uid };
+  } finally {
+    await signOut(secondaryAuth).catch(() => undefined);
+    await deleteApp(secondary).catch(() => undefined);
+  }
+}

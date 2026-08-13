@@ -112,6 +112,18 @@ const PayrollTab: React.FC<PayrollTabProps> = ({
       return;
     }
 
+    // Zero is a real answer for someone who did not turn up, but it is also what a broken
+    // link or a missing month of records looks like. Worth one question before recording it.
+    if (
+      row.breakdown.amount <= 0 &&
+      !window.confirm(
+        `${row.employee.name} works out to ₹0 for ${formatMonthLabel(periodKey)} — ` +
+          `${row.breakdown.daysWorked} day(s) present.\n\nRecord a ₹0 payment anyway?`
+      )
+    ) {
+      return;
+    }
+
     setBusyCode(row.employee.empCode);
     try {
       await markPaid({
@@ -143,9 +155,35 @@ const PayrollTab: React.FC<PayrollTabProps> = ({
   };
 
   const handleUndo = async (row: (typeof rows)[number]) => {
+    if (
+      !window.confirm(
+        `Undo the ${formatMonthLabel(periodKey)} payment for ${row.employee.name}?\n\n` +
+          `They will show as payable again. The original payment stays on the record as ` +
+          `reverted, and the change is written to the activity log.`
+      )
+    ) {
+      return;
+    }
+
     setBusyCode(row.employee.empCode);
     try {
       await undoPayment(row.employee.empCode, periodKey, userData?.name || userData?.email || 'admin');
+
+      /**
+       * Flip the row locally before re-reading.
+       *
+       * Firestore serves this read from its own cache a beat after the write lands, and on
+       * a slow connection the row would otherwise sit there still saying "Paid" — which
+       * reads exactly like the undo having failed, and invites a second click.
+       */
+      setPayments((current) =>
+        current.map((payment) =>
+          payment.empCode === row.employee.empCode
+            ? { ...payment, status: 'reverted' as const }
+            : payment
+        )
+      );
+
       toast({ title: 'Payment undone', description: `${row.employee.name} is payable again.` });
       await loadPayments();
     } catch (error) {
@@ -154,6 +192,8 @@ const PayrollTab: React.FC<PayrollTabProps> = ({
         description: error instanceof Error ? error.message : 'Unknown error',
         variant: 'destructive',
       });
+      // The optimistic flip must not survive a failure, or the table would lie.
+      await loadPayments();
     } finally {
       setBusyCode(null);
     }
@@ -318,18 +358,28 @@ const PayrollTab: React.FC<PayrollTabProps> = ({
                                 disabled={busy}
                                 onClick={() => handleUndo(row)}
                                 title="Undo this payment"
+                                aria-label={`Undo payment for ${row.employee.name}`}
                               >
                                 <Undo2 className="h-4 w-4" />
                               </Button>
                             </div>
                           ) : (
-                            <Button
-                              size="sm"
-                              disabled={busy || row.breakdown.needsSetup}
-                              onClick={() => handleMarkPaid(row)}
-                            >
-                              {busy ? 'Saving…' : 'Mark paid'}
-                            </Button>
+                            <div className="flex flex-col items-end gap-1">
+                              <Button
+                                size="sm"
+                                disabled={busy || row.breakdown.needsSetup}
+                                onClick={() => handleMarkPaid(row)}
+                              >
+                                {busy ? 'Saving…' : 'Mark paid'}
+                              </Button>
+                              {/* Says the undo worked, and leaves the accidental click visible
+                                  instead of quietly pretending it never happened. */}
+                              {row.payment?.status === 'reverted' && (
+                                <span className="text-[0.68rem] text-amber-600 dark:text-amber-400">
+                                  Undone — was {formatCurrency(row.payment.amount || 0)}
+                                </span>
+                              )}
+                            </div>
                           )}
                         </TableCell>
                       </TableRow>
@@ -345,9 +395,11 @@ const PayrollTab: React.FC<PayrollTabProps> = ({
       <p className="text-xs text-gray-500">
         Monthly salaries are paid by the hour: salary ÷ (working days × {settings.standardHoursPerDay} hrs)
         gives the rate, and pay follows the hours actually worked — so arriving late and staying on
-        still earns a full day. {settings.breakMinutes} minutes of unpaid break come off each day
-        worked. Pay is capped at the full salary, so extra hours make up a shortfall rather than
-        paying a bonus. "Hours worked" shows paid hours against a full month.
+        still earns a full day, and hours beyond a full month are paid at the same rate as
+        overtime. Time away from the shop comes off only when it lasted{' '}
+        {settings.minBreakMinutes} minutes or more; on a day with no lunch punch,{' '}
+        {settings.breakMinutes} minutes are deducted instead. "Hours worked" shows paid hours
+        against a full month.
       </p>
     </div>
   );

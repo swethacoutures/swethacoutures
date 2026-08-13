@@ -84,7 +84,7 @@ const Layout = ({ children }: LayoutProps) => {
   const handleLogout = async () => {
     try {
       await signOut(auth);
-      navigate('/login');
+      navigate('/admin');
       toast({
         title: "Success",
         description: "Logged out successfully",

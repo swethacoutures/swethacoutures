@@ -79,6 +79,15 @@ const Attendance: React.FC = () => {
 
   const bounds = useMemo(() => rangeBounds(range), [range]);
 
+  /** Names the loaded window in plain words, for the bulk-delete confirmation. */
+  const periodLabel = useMemo(() => {
+    if (range === 'today') return 'today';
+    if (range === 'month') {
+      return new Date().toLocaleDateString('en-IN', { month: 'long', year: 'numeric' });
+    }
+    return 'all time';
+  }, [range]);
+
   const loadRecords = useCallback(async () => {
     // Widen the query to cover both the Records filter and the payroll month, so one
     // fetch serves both tabs and switching tabs does not blank the table.
@@ -210,6 +219,7 @@ const Attendance: React.FC = () => {
             employees={employees}
             loading={loading}
             onChanged={loadAll}
+            periodLabel={periodLabel}
           />
         </TabsContent>
 
@@ -219,6 +229,7 @@ const Attendance: React.FC = () => {
             employees={employees}
             loading={loading}
             onChanged={loadAll}
+            periodLabel={periodLabel}
           />
         </TabsContent>
 

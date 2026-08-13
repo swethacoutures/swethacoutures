@@ -19,7 +19,11 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { toast } from '@/hooks/use-toast';
-import { createManualEmployee, saveEmployee } from '@/utils/attendance/attendanceStore';
+import {
+  createManualEmployee,
+  linkEmployeeToStaff,
+  saveEmployee,
+} from '@/utils/attendance/attendanceStore';
 import type { AttendanceEmployee, SalaryMode } from '@/utils/attendance/types';
 
 interface EmployeeSalaryDialogProps {
@@ -32,9 +36,10 @@ interface EmployeeSalaryDialogProps {
 }
 
 const MODE_HELP: Record<SalaryMode, string> = {
-  monthly: 'Monthly salary, pro-rated by the days actually present (÷ working days × days present).',
-  daily: 'A fixed wage for every day the employee checks in.',
-  hourly: 'Rate multiplied by the hours between check-in and check-out.',
+  monthly:
+    'Converted to an hourly rate (salary ÷ working days ÷ standard hours) and paid on the hours actually worked. Hours beyond a full month are paid as overtime at the same rate.',
+  daily: 'A fixed wage for every day the employee checks in, whatever hours they do.',
+  hourly: 'Rate multiplied by the paid hours between check-in and check-out.',
 };
 
 const MODE_LABEL: Record<SalaryMode, string> = {
@@ -55,6 +60,7 @@ const EmployeeSalaryDialog: React.FC<EmployeeSalaryDialogProps> = ({
   const [saving, setSaving] = useState(false);
   const [empCode, setEmpCode] = useState('');
   const [name, setName] = useState('');
+  const [department, setDepartment] = useState('');
   const [salaryMode, setSalaryMode] = useState<SalaryMode | ''>('');
   const [salaryAmount, setSalaryAmount] = useState('');
   const [standardHours, setStandardHours] = useState('8');
@@ -65,12 +71,27 @@ const EmployeeSalaryDialog: React.FC<EmployeeSalaryDialogProps> = ({
     if (!open) return;
     setEmpCode(employee?.empCode || '');
     setName(employee?.name || '');
+    setDepartment(employee?.department || '');
     setSalaryMode(employee?.salaryMode || '');
     setSalaryAmount(employee?.salaryAmount ? String(employee.salaryAmount) : '');
     setStandardHours(String(employee?.standardHoursPerDay ?? 8));
     setActive(employee?.active ?? true);
     setLinkedStaffId(employee?.linkedStaffId || '');
   }, [open, employee]);
+
+  /**
+   * Picking a staff member fills the name in, if it is still blank or still just the PIN.
+   * Typing the same person's name twice is how the two lists drift apart in the first place.
+   */
+  const handleStaffChange = (value: string) => {
+    const staffId = value === 'none' ? '' : value;
+    setLinkedStaffId(staffId);
+
+    const chosen = staffOptions.find((option) => option.id === staffId);
+    if (chosen && (!name.trim() || name.trim() === empCode.trim())) {
+      setName(chosen.name);
+    }
+  };
 
   const handleSave = async () => {
     const trimmedCode = empCode.trim();
@@ -103,22 +124,50 @@ const EmployeeSalaryDialog: React.FC<EmployeeSalaryDialogProps> = ({
         await createManualEmployee({
           empCode: trimmedCode,
           name: trimmedName,
-          salaryMode: (salaryMode || null) as SalaryMode | null,
-          salaryAmount: salaryMode ? amount : 0,
-          standardHoursPerDay: hours,
-        });
-      } else {
-        await saveEmployee(employee!.empCode, {
-          name: trimmedName,
+          department: department.trim(),
           salaryMode: (salaryMode || null) as SalaryMode | null,
           salaryAmount: salaryMode ? amount : 0,
           standardHoursPerDay: hours,
           active,
-          linkedStaffId: linkedStaffId || '',
+          linkedStaffId,
         });
+      } else {
+        await saveEmployee(
+          employee!.empCode,
+          {
+            name: trimmedName,
+            department: department.trim(),
+            salaryMode: (salaryMode || null) as SalaryMode | null,
+            salaryAmount: salaryMode ? amount : 0,
+            standardHoursPerDay: hours,
+            active,
+            linkedStaffId: linkedStaffId || '',
+          },
+          { audit: true }
+        );
       }
 
-      toast({ title: isNew ? 'Employee added' : 'Salary settings saved' });
+      // Write the other half of the join — see `linkEmployeeToStaff`. A failure here is
+      // reported but must not lose the employee that was just saved successfully.
+      if (linkedStaffId) {
+        try {
+          await linkEmployeeToStaff(trimmedCode || employee!.empCode, linkedStaffId);
+        } catch (linkError) {
+          toast({
+            title: 'Saved, but the staff link did not stick',
+            description:
+              linkError instanceof Error ? linkError.message : 'Could not update the staff record.',
+            variant: 'destructive',
+          });
+        }
+      }
+
+      toast({
+        title: isNew ? 'Employee added' : 'Employee saved',
+        description: linkedStaffId
+          ? `Linked to ${staffOptions.find((option) => option.id === linkedStaffId)?.name || 'a staff member'}.`
+          : undefined,
+      });
       onSaved();
       onOpenChange(false);
     } catch (error) {
@@ -167,6 +216,48 @@ const EmployeeSalaryDialog: React.FC<EmployeeSalaryDialogProps> = ({
               onChange={(event) => setName(event.target.value)}
               placeholder="Employee name"
             />
+          </div>
+
+          <div className="space-y-2">
+            <Label htmlFor="empDepartment">Department (optional)</Label>
+            <Input
+              id="empDepartment"
+              value={department}
+              onChange={(event) => setDepartment(event.target.value)}
+              placeholder="e.g. Stitching"
+            />
+          </div>
+
+          {/*
+            Available when adding, not only when editing. Someone typing a new person in has
+            the matching staff record in mind right then — making them save, reopen and edit
+            to record that is how the two lists end up unlinked.
+          */}
+          <div className="space-y-2">
+            <Label htmlFor="linkedStaff">Link to staff member (optional)</Label>
+            <Select value={linkedStaffId || 'none'} onValueChange={handleStaffChange}>
+              <SelectTrigger id="linkedStaff">
+                <SelectValue placeholder="Not linked" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="none">Not linked</SelectItem>
+                {staffOptions.map((option) => (
+                  <SelectItem key={option.id} value={option.id}>
+                    {option.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <p className="text-xs text-gray-500">
+              Ties these fingerprint records to a person on the Employees page, so their payable
+              salary there is worked out from real check-in and check-out times. It does not
+              change their staff salary or add an expense.
+            </p>
+            {staffOptions.length === 0 && (
+              <p className="text-xs text-amber-600">
+                No staff members found. Add them on the Employees page first.
+              </p>
+            )}
           </div>
 
           <div className="space-y-2">
@@ -219,40 +310,13 @@ const EmployeeSalaryDialog: React.FC<EmployeeSalaryDialogProps> = ({
             <p className="text-xs text-gray-500">Used as a reference for a normal working day.</p>
           </div>
 
-          {!isNew && (
-            <>
-              <div className="space-y-2">
-                <Label htmlFor="linkedStaff">Link to staff member (optional)</Label>
-                <Select
-                  value={linkedStaffId || 'none'}
-                  onValueChange={(value) => setLinkedStaffId(value === 'none' ? '' : value)}
-                >
-                  <SelectTrigger id="linkedStaff">
-                    <SelectValue placeholder="Not linked" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="none">Not linked</SelectItem>
-                    {staffOptions.map((option) => (
-                      <SelectItem key={option.id} value={option.id}>
-                        {option.name}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-                <p className="text-xs text-gray-500">
-                  Purely a cross-reference to your existing Staff list. It does not change staff salary or expenses.
-                </p>
-              </div>
-
-              <div className="flex items-center justify-between rounded-lg border p-3">
-                <div>
-                  <Label htmlFor="active" className="cursor-pointer">Active</Label>
-                  <p className="text-xs text-gray-500">Inactive employees are hidden from payroll.</p>
-                </div>
-                <Switch id="active" checked={active} onCheckedChange={setActive} />
-              </div>
-            </>
-          )}
+          <div className="flex items-center justify-between rounded-lg border p-3">
+            <div>
+              <Label htmlFor="active" className="cursor-pointer">Active</Label>
+              <p className="text-xs text-gray-500">Inactive employees are hidden from payroll.</p>
+            </div>
+            <Switch id="active" checked={active} onCheckedChange={setActive} />
+          </div>
         </div>
 
         <DialogFooter>

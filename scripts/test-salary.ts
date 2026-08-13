@@ -41,6 +41,9 @@ type AttendanceSettings = {
   standardHoursPerDay: number;
   breakMinutes: number;
   weeklyOffDays: number[];
+  /** Left off SETTINGS below on purpose, so the defaults are exercised too. */
+  minPunchGapMinutes?: number;
+  minBreakMinutes?: number;
 };
 
 let passed = 0;
@@ -230,6 +233,80 @@ section('The other pay bases still work');
   const unset = { ...monthly(0), salaryMode: null } as AttendanceEmployee;
   const r = calculateSalary(unset, records, '2026-08-01', '2026-08-31', SETTINGS);
   check('an employee with no pay set earns 0 and is flagged', r.amount === 0 && r.needsSetup);
+}
+
+/* ------------------------------------------------- repeat presses & short gaps */
+
+section('Repeat presses on the sensor');
+{
+  // Straight from the shop's own data, 10 Aug 2026, employee 2: sixteen punches between
+  // 17:47 and 19:27. Nobody left and came back eight times — they pressed repeatedly.
+  const real = day(
+    '2026-08-10',
+    '17:47', '17:48', '17:53', '17:57', '18:19', '18:20', '18:21', '18:30',
+    '18:34', '18:39', '18:44', '18:52', '18:53', '19:02', '19:20', '19:27'
+  );
+  const paid = paidHoursForDay(real, SETTINGS);
+
+  // The old pairing rule read this as eight tiny shifts and paid about 0.3 hours for a
+  // 1h40 evening. Anything close to the real span is the point of the fix.
+  check('a real 16-punch evening is not shredded into minutes', paid > 1, String(paid));
+  check('and never pays more than the time actually on the premises', paid <= 1.67, String(paid));
+
+  check('two presses one minute apart count once',
+    paidHoursForDay(day('2026-08-03', '09:00', '09:01', '18:00'), SETTINGS) === 8,
+    String(paidHoursForDay(day('2026-08-03', '09:00', '09:01', '18:00'), SETTINGS)));
+
+  check('de-duplication respects the configured window',
+    paidHoursForDay(day('2026-08-03', '09:00', '09:01', '18:00'),
+      { ...SETTINGS, minPunchGapMinutes: 0 }) !== 8);
+}
+
+section('Short absences stay paid, real breaks do not');
+{
+  // Stepped out for five minutes mid-morning: not a lunch break.
+  check('a 5-minute step outside is still paid',
+    paidHoursForDay(day('2026-08-03', '09:00', '11:00', '11:05', '18:00'), SETTINGS) === 9,
+    String(paidHoursForDay(day('2026-08-03', '09:00', '11:00', '11:05', '18:00'), SETTINGS)));
+
+  // Exactly at the threshold — 20 minutes counts as a break.
+  check('a 20-minute absence is on the break side of the line',
+    paidHoursForDay(day('2026-08-03', '09:00', '11:00', '11:20', '18:00'), SETTINGS) === 8.67,
+    String(paidHoursForDay(day('2026-08-03', '09:00', '11:00', '11:20', '18:00'), SETTINGS)));
+
+  check('the threshold is configurable',
+    paidHoursForDay(day('2026-08-03', '09:00', '11:00', '11:05', '18:00'),
+      { ...SETTINGS, minPunchGapMinutes: 1, minBreakMinutes: 5 }) === 8.92,
+    String(paidHoursForDay(day('2026-08-03', '09:00', '11:00', '11:05', '18:00'),
+      { ...SETTINGS, minPunchGapMinutes: 1, minBreakMinutes: 5 })));
+}
+
+section("A hand correction beats the device's punches");
+{
+  /**
+   * The record keeps its original punches when an admin corrects the times — the write
+   * merges. Reading punches first meant the correction showed in the table and changed
+   * nothing on the payslip, which is the worst of both.
+   */
+  const corrected = {
+    ...day('2026-08-03', '09:00', '13:00', '14:00', '18:00'),
+    checkIn: '09:00',
+    checkOut: '19:00',
+    hoursWorked: 10,
+    manuallyEdited: true,
+  } as AttendanceRecord;
+
+  check('the corrected times are used, not the stale punch array',
+    paidHoursForDay(corrected, SETTINGS) === 9,
+    String(paidHoursForDay(corrected, SETTINGS)));
+
+  check('and the same record without the flag still reads its punches',
+    paidHoursForDay({ ...corrected, manuallyEdited: false }, SETTINGS) === 8,
+    String(paidHoursForDay({ ...corrected, manuallyEdited: false }, SETTINGS)));
+
+  const salary = calculateSalary(monthly(10000), [corrected], '2026-08-01', '2026-08-31', SETTINGS);
+  check('and the correction reaches the payslip',
+    salary.paidHours === 9, String(salary.paidHours));
 }
 
 console.log(`\n${'─'.repeat(60)}`);

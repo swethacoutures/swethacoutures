@@ -21,8 +21,9 @@ import {
 import { Download, Fingerprint, LogIn, LogOut, Search, Trash2 } from 'lucide-react';
 import { saveAs } from 'file-saver';
 import { toast } from '@/hooks/use-toast';
-import { deletePunch } from '@/utils/attendance/deviceStore';
+import { deletePunch, deletePunches } from '@/utils/attendance/deviceStore';
 import type { AttendanceEmployee, DevicePunch } from '@/utils/attendance/types';
+import BulkDeleteDialog, { type DeleteScope } from './BulkDeleteDialog';
 
 interface PunchesTabProps {
   punches: DevicePunch[];
@@ -30,6 +31,8 @@ interface PunchesTabProps {
   loading: boolean;
   /** Reload after a deletion, so the table matches the database. */
   onChanged: () => void;
+  /** The range these punches were loaded for, named for the delete confirmation. */
+  periodLabel: string;
 }
 
 /** '2026-08-08' -> '08 Aug 2026' */
@@ -67,8 +70,15 @@ function csvCell(value: unknown): string {
  * The Records tab shows the day summary that payroll uses; this is the evidence behind
  * it. When someone disputes a day, this is where the individual presses are.
  */
-const PunchesTab: React.FC<PunchesTabProps> = ({ punches, employees, loading, onChanged }) => {
+const PunchesTab: React.FC<PunchesTabProps> = ({
+  punches,
+  employees,
+  loading,
+  onChanged,
+  periodLabel,
+}) => {
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [bulkOpen, setBulkOpen] = useState(false);
 
   const handleDelete = async (punch: DevicePunch) => {
     if (
@@ -124,6 +134,27 @@ const PunchesTab: React.FC<PunchesTabProps> = ({ punches, employees, loading, on
     }),
     [filtered]
   );
+
+  const handleDeleteAll = async (scope: DeleteScope) => {
+    const target = scope === 'filtered' ? filtered : punches;
+    try {
+      const removed = await deletePunches(
+        target,
+        scope === 'filtered' ? `filtered view, ${periodLabel}` : periodLabel
+      );
+      toast({
+        title: `Deleted ${removed} punch${removed === 1 ? '' : 'es'}`,
+        description: 'Recorded in the activity log.',
+      });
+      onChanged();
+    } catch (error) {
+      toast({
+        title: 'Could not delete',
+        description: error instanceof Error ? error.message : 'Unknown error',
+        variant: 'destructive',
+      });
+    }
+  };
 
   const handleExport = () => {
     if (filtered.length === 0) {
@@ -225,6 +256,15 @@ const PunchesTab: React.FC<PunchesTabProps> = ({ punches, employees, loading, on
         <Button variant="outline" onClick={handleExport}>
           <Download className="mr-2 h-4 w-4" />
           Export CSV
+        </Button>
+        <Button
+          variant="outline"
+          onClick={() => setBulkOpen(true)}
+          disabled={punches.length === 0}
+          className="border-red-200 text-red-600 hover:bg-red-50 hover:text-red-700 dark:border-red-900 dark:hover:bg-red-950/40"
+        >
+          <Trash2 className="mr-2 h-4 w-4" />
+          Delete all
         </Button>
       </div>
 
@@ -330,6 +370,18 @@ const PunchesTab: React.FC<PunchesTabProps> = ({ punches, employees, loading, on
         check-in and check-out per day, which is what Payroll uses. A punch marked “Held” arrived
         while its device was still awaiting approval.
       </p>
+
+      <BulkDeleteDialog
+        open={bulkOpen}
+        onOpenChange={setBulkOpen}
+        noun="punch"
+        nounPlural="punches"
+        filteredCount={filtered.length}
+        totalCount={punches.length}
+        periodLabel={periodLabel}
+        keptNote="Day records on the Records tab are kept as they are — deleting the raw feed does not change anyone's paid hours. Correct the day itself if the hours are now wrong."
+        onConfirm={handleDeleteAll}
+      />
     </div>
   );
 };

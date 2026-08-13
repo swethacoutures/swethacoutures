@@ -12,7 +12,6 @@ import {
   getDoc,
   getDocs,
   setDoc,
-  updateDoc,
   deleteDoc,
   query,
   where,
@@ -92,19 +91,66 @@ export async function createManualEmployee(input: {
   salaryMode: SalaryMode | null;
   salaryAmount: number;
   standardHoursPerDay: number;
+  active?: boolean;
+  /** Optional cross-reference to a `staff` document, set at creation time. */
+  linkedStaffId?: string;
 }): Promise<void> {
   const existing = await getDoc(doc(db, EMPLOYEES_COLLECTION, input.empCode));
   if (existing.exists()) {
-    throw new Error(`Employee code "${input.empCode}" already exists.`);
+    throw new Error(
+      `Employee code "${input.empCode}" already exists — it belongs to ` +
+        `${(existing.data() as AttendanceEmployee).name || 'someone else'}. ` +
+        `Use the code from the fingerprint device, and edit that row instead of adding a second one.`
+    );
   }
+
   await setDoc(doc(db, EMPLOYEES_COLLECTION, input.empCode), {
     ...input,
-    active: true,
+    department: input.department || '',
+    linkedStaffId: input.linkedStaffId || '',
+    active: input.active ?? true,
     source: 'manual',
     firstSeenAt: nowIso(),
     createdAt: nowIso(),
     updatedAt: nowIso(),
   });
+
+  await logActivity({
+    action: 'create',
+    entity: 'attendanceEmployee',
+    entityId: input.empCode,
+    summary: `Added employee ${input.name} (code ${input.empCode}) by hand`,
+    after: {
+      name: input.name,
+      salaryMode: input.salaryMode,
+      salaryAmount: input.salaryAmount,
+      linkedStaffId: input.linkedStaffId || '',
+    },
+  });
+}
+
+/**
+ * Records the link on both sides of the join.
+ *
+ * `attendanceEmployees.linkedStaffId` alone is only half a link: `matchAttendanceEmployee`
+ * checks `staff.attendanceEmpCode` first, and the Employees page reads from there. Writing
+ * only one direction is why a link could look set on the attendance side and still show
+ * "No attendance record linked" on the staff page.
+ */
+export async function linkEmployeeToStaff(empCode: string, staffId: string): Promise<void> {
+  await setDoc(
+    doc(db, EMPLOYEES_COLLECTION, empCode),
+    { linkedStaffId: staffId, updatedAt: nowIso() },
+    { merge: true }
+  );
+
+  if (staffId) {
+    await setDoc(
+      doc(db, 'staff', staffId),
+      { attendanceEmpCode: empCode },
+      { merge: true }
+    );
+  }
 }
 
 export async function deleteEmployee(empCode: string): Promise<void> {
@@ -113,6 +159,20 @@ export async function deleteEmployee(empCode: string): Promise<void> {
     | undefined;
 
   await deleteDoc(doc(db, EMPLOYEES_COLLECTION, empCode));
+
+  /**
+   * Clear the pointer on the staff side too.
+   *
+   * `matchAttendanceEmployee` looks up `staff.attendanceEmpCode` first. Left behind, it
+   * points at a code that no longer exists, so the staff row silently falls back to
+   * matching by name — or to nothing at all — and nobody can see why.
+   */
+  const linkedStaffId = before?.linkedStaffId as string | undefined;
+  if (linkedStaffId) {
+    await setDoc(doc(db, 'staff', linkedStaffId), { attendanceEmpCode: '' }, { merge: true }).catch(
+      (error) => console.error('[attendance] could not clear the staff link', error)
+    );
+  }
 
   await logActivity({
     action: 'delete',
@@ -212,6 +272,48 @@ export async function deleteRecord(id: string): Promise<void> {
     summary: `Deleted attendance for ${before?.employeeName || id} on ${before?.date || '?'}`,
     before,
   });
+}
+
+/**
+ * Deletes many day records at once.
+ *
+ * Chunked to stay under Firestore's batch limit, and logged as **one** audit entry rather
+ * than one per record — a bulk clear-out that wrote three hundred lines into `activityLog`
+ * would bury every individual correction anyone had ever made, which is exactly what the
+ * log exists to preserve. The summary names the range and the count, which is what someone
+ * reconstructing a disputed month actually needs to know.
+ */
+export async function deleteRecords(
+  records: Pick<AttendanceRecord, 'id' | 'date' | 'employeeName' | 'empCode'>[],
+  context: string
+): Promise<number> {
+  if (records.length === 0) return 0;
+
+  for (let offset = 0; offset < records.length; offset += BATCH_LIMIT) {
+    const batch = writeBatch(db);
+    for (const record of records.slice(offset, offset + BATCH_LIMIT)) {
+      batch.delete(doc(db, RECORDS_COLLECTION, record.id));
+    }
+    await batch.commit();
+  }
+
+  const dates = records.map((record) => record.date).sort();
+  await logActivity({
+    action: 'delete',
+    entity: 'attendanceRecord',
+    entityId: `bulk:${records.length}`,
+    summary:
+      `Deleted ${records.length} attendance record${records.length === 1 ? '' : 's'} (${context})` +
+      (dates.length ? ` covering ${dates[0]} to ${dates[dates.length - 1]}` : ''),
+    before: {
+      count: records.length,
+      firstDate: dates[0],
+      lastDate: dates[dates.length - 1],
+      employees: [...new Set(records.map((record) => record.employeeName || record.empCode))],
+    },
+  });
+
+  return records.length;
 }
 
 /**
@@ -334,20 +436,43 @@ export async function markPaid(input: {
 /**
  * Undo. Soft revert rather than delete, so an accidental click and its correction
  * both remain on the record.
+ *
+ * `setDoc(..., { merge: true })` rather than `updateDoc`, which fails outright if the
+ * document has gone. Undo is the button someone reaches for when something has already
+ * gone wrong; refusing to work because the record it was undoing is missing would be the
+ * worst possible moment to be strict. A revert on nothing leaves a reverted marker, which
+ * is exactly what the payroll table then reads as "not paid".
  */
-export async function undoPayment(empCode: string, periodKey: string, revertedBy: string): Promise<void> {
-  await updateDoc(doc(db, PAYMENTS_COLLECTION, paymentId(empCode, periodKey)), {
-    status: 'reverted',
-    revertedAt: nowIso(),
-    revertedBy,
-  });
+export async function undoPayment(
+  empCode: string,
+  periodKey: string,
+  revertedBy: string
+): Promise<void> {
+  const id = paymentId(empCode, periodKey);
+  const before = (await getDoc(doc(db, PAYMENTS_COLLECTION, id))).data() as
+    | Record<string, unknown>
+    | undefined;
+
+  await setDoc(
+    doc(db, PAYMENTS_COLLECTION, id),
+    {
+      empCode,
+      periodKey,
+      status: 'reverted',
+      revertedAt: nowIso(),
+      revertedBy,
+    },
+    { merge: true }
+  );
 
   await logActivity({
     action: 'undo-pay',
     entity: 'salaryPayment',
-    entityId: paymentId(empCode, periodKey),
-    summary: `Undid the ${periodKey} payment for ${empCode}`,
-    before: { status: 'paid' },
+    entityId: id,
+    summary:
+      `Undid the ${periodKey} payment for ${before?.employeeName || empCode}` +
+      (before?.amount ? ` (₹${before.amount})` : ''),
+    before: { status: before?.status || 'unknown', amount: before?.amount },
     after: { status: 'reverted' },
   });
 }
@@ -379,6 +504,14 @@ export async function fetchAttendanceSettings(): Promise<AttendanceSettings> {
       Number.isFinite(Number(saved.breakMinutes)) && Number(saved.breakMinutes) >= 0
         ? Number(saved.breakMinutes)
         : DEFAULT_ATTENDANCE_SETTINGS.breakMinutes,
+    minPunchGapMinutes:
+      Number.isFinite(Number(saved.minPunchGapMinutes)) && Number(saved.minPunchGapMinutes) >= 0
+        ? Number(saved.minPunchGapMinutes)
+        : DEFAULT_ATTENDANCE_SETTINGS.minPunchGapMinutes,
+    minBreakMinutes:
+      Number.isFinite(Number(saved.minBreakMinutes)) && Number(saved.minBreakMinutes) >= 0
+        ? Number(saved.minBreakMinutes)
+        : DEFAULT_ATTENDANCE_SETTINGS.minBreakMinutes,
     weeklyOffDays: Array.isArray(saved.weeklyOffDays)
       ? saved.weeklyOffDays
       : DEFAULT_ATTENDANCE_SETTINGS.weeklyOffDays,

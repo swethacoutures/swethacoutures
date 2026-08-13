@@ -173,8 +173,44 @@ const AttendanceSettingsDialog: React.FC<AttendanceSettingsDialogProps> = ({
             </div>
           </div>
           <p className="-mt-2 text-xs text-gray-500">
-            The break is taken off each day someone works. In at 9:00, out at 18:00 with a
-            60-minute break is {Math.max(0, 9 - draft.breakMinutes / 60)} paid hours.
+            Used only when someone did not punch out for lunch. In at 9:00, out at 18:00 with a
+            60-minute break is {Math.max(0, 9 - draft.breakMinutes / 60)} paid hours. When the
+            punches do show them leaving and coming back, the real gap is used instead.
+          </p>
+
+          <div className="grid grid-cols-2 gap-3">
+            <div className="space-y-1.5">
+              <Label htmlFor="min-punch-gap">Ignore repeat presses within (min)</Label>
+              <Input
+                id="min-punch-gap"
+                type="number"
+                min={0}
+                max={60}
+                step={1}
+                value={draft.minPunchGapMinutes}
+                onChange={(e) =>
+                  setDraft({ ...draft, minPunchGapMinutes: Number(e.target.value) })
+                }
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="min-break">Count as a break from (min)</Label>
+              <Input
+                id="min-break"
+                type="number"
+                min={0}
+                max={240}
+                step={5}
+                value={draft.minBreakMinutes}
+                onChange={(e) => setDraft({ ...draft, minBreakMinutes: Number(e.target.value) })}
+              />
+            </div>
+          </div>
+          <p className="-mt-2 text-xs text-gray-500">
+            People press the sensor twice when they are unsure it read, and the terminal repeats
+            a batch after a dropped connection. Presses closer together than the first figure
+            count once. Time away shorter than the second stays paid — stepping out for three
+            minutes is not a lunch break.
           </p>
 
           <div className="space-y-2">
@@ -217,8 +253,8 @@ const AttendanceSettingsDialog: React.FC<AttendanceSettingsDialogProps> = ({
                 ₹10,000 ÷ {exampleHours} hrs = <strong>{formatCurrency(Math.round(exampleRate * 100) / 100)}</strong> per hour
               </p>
               <p className="pt-1 text-xs text-gray-600 dark:text-gray-400">
-                Pay follows the hours actually worked, capped at ₹10,000 — extra hours make up a
-                shortfall, they never pay more than the agreed salary.
+                Pay follows the hours actually worked. A short month pays less than ₹10,000, and
+                hours beyond a full month are paid at the same rate as overtime.
               </p>
             </CardContent>
           </Card>

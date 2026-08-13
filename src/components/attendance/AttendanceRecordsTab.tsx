@@ -20,15 +20,18 @@ import {
 } from '@/components/ui/table';
 import { Pencil, Plus, Trash2, Search, LogIn, LogOut, Clock } from 'lucide-react';
 import { toast } from '@/hooks/use-toast';
-import { deleteRecord } from '@/utils/attendance/attendanceStore';
+import { deleteRecord, deleteRecords } from '@/utils/attendance/attendanceStore';
 import type { AttendanceEmployee, AttendanceRecord } from '@/utils/attendance/types';
 import RecordEditDialog from './RecordEditDialog';
+import BulkDeleteDialog, { type DeleteScope } from './BulkDeleteDialog';
 
 interface AttendanceRecordsTabProps {
   records: AttendanceRecord[];
   employees: AttendanceEmployee[];
   loading: boolean;
   onChanged: () => void;
+  /** The range these records were loaded for, named for the delete confirmation. */
+  periodLabel: string;
 }
 
 /** '2026-08-06' -> '06 Aug 2026' */
@@ -47,11 +50,13 @@ const AttendanceRecordsTab: React.FC<AttendanceRecordsTabProps> = ({
   employees,
   loading,
   onChanged,
+  periodLabel,
 }) => {
   const [search, setSearch] = useState('');
   const [employeeFilter, setEmployeeFilter] = useState('all');
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editing, setEditing] = useState<AttendanceRecord | null>(null);
+  const [bulkOpen, setBulkOpen] = useState(false);
 
   const filtered = useMemo(() => {
     const term = search.trim().toLowerCase();
@@ -82,6 +87,27 @@ const AttendanceRecordsTab: React.FC<AttendanceRecordsTabProps> = ({
     try {
       await deleteRecord(record.id);
       toast({ title: 'Attendance deleted' });
+      onChanged();
+    } catch (error) {
+      toast({
+        title: 'Could not delete',
+        description: error instanceof Error ? error.message : 'Unknown error',
+        variant: 'destructive',
+      });
+    }
+  };
+
+  const handleDeleteAll = async (scope: DeleteScope) => {
+    const target = scope === 'filtered' ? filtered : records;
+    try {
+      const removed = await deleteRecords(
+        target,
+        scope === 'filtered' ? `filtered view, ${periodLabel}` : periodLabel
+      );
+      toast({
+        title: `Deleted ${removed} record${removed === 1 ? '' : 's'}`,
+        description: 'Recorded in the activity log.',
+      });
       onChanged();
     } catch (error) {
       toast({
@@ -147,15 +173,26 @@ const AttendanceRecordsTab: React.FC<AttendanceRecordsTabProps> = ({
             ))}
           </SelectContent>
         </Select>
-        <Button
-          onClick={() => {
-            setEditing(null);
-            setDialogOpen(true);
-          }}
-        >
-          <Plus className="mr-2 h-4 w-4" />
-          Add
-        </Button>
+        <div className="flex gap-2">
+          <Button
+            onClick={() => {
+              setEditing(null);
+              setDialogOpen(true);
+            }}
+          >
+            <Plus className="mr-2 h-4 w-4" />
+            Add
+          </Button>
+          <Button
+            variant="outline"
+            onClick={() => setBulkOpen(true)}
+            disabled={records.length === 0}
+            className="border-red-200 text-red-600 hover:bg-red-50 hover:text-red-700 dark:border-red-900 dark:hover:bg-red-950/40"
+          >
+            <Trash2 className="mr-2 h-4 w-4" />
+            Delete all
+          </Button>
+        </div>
       </div>
 
       <Card>
@@ -254,6 +291,18 @@ const AttendanceRecordsTab: React.FC<AttendanceRecordsTabProps> = ({
         record={editing}
         employees={employees}
         onSaved={onChanged}
+      />
+
+      <BulkDeleteDialog
+        open={bulkOpen}
+        onOpenChange={setBulkOpen}
+        noun="attendance record"
+        nounPlural="attendance records"
+        filteredCount={filtered.length}
+        totalCount={records.length}
+        periodLabel={periodLabel}
+        keptNote="Raw punches on the Punches tab are kept, so a deleted day can be rebuilt from them. Employees and salary payments are not touched."
+        onConfirm={handleDeleteAll}
       />
     </div>
   );

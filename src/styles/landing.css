@@ -1,0 +1,307 @@
+/**
+ * Swetha's Couture — public site.
+ *
+ * Everything here is scoped under `.atelier` so the marketing site can have its own
+ * typography, colour and texture without leaking into the admin app, which uses the
+ * shadcn token set and has a dark mode. The public site is deliberately light-only:
+ * a customer's brochure should not change appearance because the shop owner once
+ * flipped a dark-mode switch inside the back office.
+ *
+ * The aesthetic: paper, ink and gold thread. No photography — the visual language is
+ * drawn line-art of garments and a running-stitch rule that threads down the page.
+ *
+ * Two classes, deliberately: `.atelier` carries the tokens and utilities and goes on any
+ * subtree that needs them — including the booking dialog, which Radix portals out to
+ * document.body and would otherwise inherit the admin app's dark tokens. `.atelier-page`
+ * adds the things that only make sense once, on the page root, such as the grain overlay.
+ */
+
+.atelier {
+  /* Warm neutrals — unbleached silk rather than screen white. */
+  --paper: #f7f1e6;
+  --paper-deep: #efe4d3;
+  --paper-warm: #fbf7f0;
+
+  --ink: #17130f;
+  --ink-soft: #3d342c;
+  --ink-muted: #7d6f5d;
+
+  /* Madder red — the kumkum/alta note that runs through Indian textile. */
+  --madder: #7a2b25;
+  --madder-bright: #9c3a2e;
+
+  /* Antique zari gold. Used as thread and hairline, never as a fill. */
+  --gold: #b08d3f;
+  --gold-light: #d9bc72;
+  --gold-pale: #e8d9b0;
+
+  --line: rgba(23, 19, 15, 0.14);
+  --line-soft: rgba(23, 19, 15, 0.08);
+
+  --display: 'Cormorant Garamond', 'Iowan Old Style', Georgia, serif;
+  --sans: 'Jost', 'Avenir Next', 'Segoe UI', sans-serif;
+
+  --shell: 88rem;
+
+  color: var(--ink);
+  font-family: var(--sans);
+  font-weight: 300;
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+.atelier-page {
+  background-color: var(--paper);
+  font-size: 16px;
+  position: relative;
+  /* `clip` rather than `hidden`: hidden on an ancestor would break `position: sticky`
+     on the header, which is the one thing on the page that must keep working. */
+  overflow-x: clip;
+}
+
+/* Paper grain. An inline SVG turbulence rather than an image request. */
+.atelier-page::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  pointer-events: none;
+  opacity: 0.32;
+  mix-blend-mode: multiply;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='240' height='240'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='4' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='240' height='240' filter='url(%23n)' opacity='0.55'/%3E%3C/svg%3E");
+}
+
+/* ------------------------------------------------------------------ typography */
+
+/**
+ * Headings deliberately do NOT set a colour.
+ *
+ * `.atelier h2` would be one specificity step above a Tailwind `text-[…]` utility, so a
+ * heading on one of the ink-coloured sections silently kept the dark ink colour and
+ * rendered black-on-black. Colour is inherited from `.atelier` (or set per element with a
+ * utility, which now actually wins).
+ */
+.atelier h1,
+.atelier h2,
+.atelier h3,
+.atelier .ff-display {
+  font-family: var(--display);
+  font-weight: 300;
+  letter-spacing: -0.015em;
+  line-height: 1.02;
+}
+
+/* Tailwind's `font-[...]` arbitrary value is ambiguous between family, size and weight,
+   so the two faces get plain classes instead. */
+.atelier .ff-sans {
+  font-family: var(--sans);
+}
+
+/**
+ * The small letter-spaced label above every section title. Colour is set at each usage
+ * for the same specificity reason as the headings above — on the ink sections it is gold,
+ * on the paper sections madder.
+ */
+.atelier .eyebrow {
+  font-family: var(--sans);
+  font-size: 0.6875rem;
+  font-weight: 500;
+  letter-spacing: 0.34em;
+  text-transform: uppercase;
+}
+
+.atelier .lede {
+  font-size: clamp(1.0625rem, 0.95rem + 0.5vw, 1.25rem);
+  line-height: 1.72;
+  color: var(--ink-soft);
+  font-weight: 300;
+}
+
+/* Italic serif for the one word per headline that carries the emphasis. */
+.atelier .accent-word {
+  font-style: italic;
+  color: var(--madder);
+}
+
+/* ---------------------------------------------------------------- ornamentation */
+
+/* Gold hairline with a stitch cadence — the motif that ties the page together. */
+.atelier .stitch-rule {
+  height: 1px;
+  width: 100%;
+  background-image: linear-gradient(to right, var(--gold) 0 8px, transparent 8px 16px);
+  background-size: 16px 1px;
+  opacity: 0.6;
+}
+
+.atelier .stitch-rule-v {
+  width: 1px;
+  background-image: linear-gradient(to bottom, var(--gold) 0 8px, transparent 8px 16px);
+  background-size: 1px 16px;
+  opacity: 0.55;
+}
+
+/* Woven ground for the darker panels — a fabric twill at very low contrast. */
+.atelier .weave {
+  background-image:
+    repeating-linear-gradient(45deg, rgba(216, 188, 114, 0.05) 0 1px, transparent 1px 5px),
+    repeating-linear-gradient(-45deg, rgba(216, 188, 114, 0.04) 0 1px, transparent 1px 5px);
+}
+
+/* Foil gradient for the gold rules and numerals. */
+.atelier .foil {
+  background: linear-gradient(100deg, #9a7830 0%, #d9bc72 28%, #8c6c2c 52%, #e2cb92 74%, #a07f34 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+/* --------------------------------------------------------------------- motion */
+
+/* Scroll reveal. The class is added by an IntersectionObserver in Reveal.tsx. */
+.atelier .reveal {
+  opacity: 0;
+  transform: translateY(1.75rem);
+  transition:
+    opacity 0.9s cubic-bezier(0.16, 1, 0.3, 1),
+    transform 0.9s cubic-bezier(0.16, 1, 0.3, 1);
+  will-change: opacity, transform;
+}
+
+.atelier .reveal.is-visible {
+  opacity: 1;
+  transform: none;
+}
+
+/* Line-art that draws itself, like a stitch being run. */
+@keyframes atelier-draw {
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+
+.atelier .draw path,
+.atelier .draw line,
+.atelier .draw circle,
+.atelier .draw ellipse {
+  stroke-dasharray: var(--len, 1200);
+  stroke-dashoffset: var(--len, 1200);
+  animation: atelier-draw 2.6s cubic-bezier(0.65, 0, 0.35, 1) forwards;
+}
+
+@keyframes atelier-marquee {
+  from {
+    transform: translateX(0);
+  }
+  to {
+    /* Half, because the track holds the same content twice. */
+    transform: translateX(-50%);
+  }
+}
+
+.atelier .marquee-track {
+  animation: atelier-marquee 42s linear infinite;
+}
+
+@keyframes atelier-rise {
+  from {
+    opacity: 0;
+    transform: translateY(1.5rem);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.atelier .rise {
+  opacity: 0;
+  animation: atelier-rise 1s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+/* A slow drift for the decorative thread loops behind the hero. */
+@keyframes atelier-drift {
+  0%,
+  100% {
+    transform: translate3d(0, 0, 0) rotate(0deg);
+  }
+  50% {
+    transform: translate3d(0, -1.25rem, 0) rotate(1.5deg);
+  }
+}
+
+.atelier .drift {
+  animation: atelier-drift 14s ease-in-out infinite;
+}
+
+/* --------------------------------------------------------------- interactions */
+
+/* Underline that runs in from the left, like a tacking stitch. */
+.atelier .link-stitch {
+  position: relative;
+}
+
+.atelier .link-stitch::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  bottom: -0.3rem;
+  height: 1px;
+  width: 100%;
+  transform: scaleX(0);
+  transform-origin: left;
+  transition: transform 0.45s cubic-bezier(0.16, 1, 0.3, 1);
+  background-image: linear-gradient(to right, var(--madder) 0 5px, transparent 5px 10px);
+  background-size: 10px 1px;
+}
+
+.atelier .link-stitch:hover::after,
+.atelier .link-stitch:focus-visible::after,
+.atelier .link-stitch[data-active='true']::after {
+  transform: scaleX(1);
+}
+
+/* Cards lift a hair and their gold rule brightens. */
+.atelier .card-lift {
+  transition:
+    transform 0.5s cubic-bezier(0.16, 1, 0.3, 1),
+    box-shadow 0.5s cubic-bezier(0.16, 1, 0.3, 1),
+    border-color 0.5s ease;
+}
+
+.atelier .card-lift:hover {
+  transform: translateY(-0.375rem);
+  border-color: rgba(176, 141, 63, 0.55);
+  box-shadow: 0 1.5rem 3rem -1.5rem rgba(23, 19, 15, 0.28);
+}
+
+.atelier a:focus-visible,
+.atelier button:focus-visible {
+  outline: 2px solid var(--madder);
+  outline-offset: 3px;
+  border-radius: 2px;
+}
+
+/* Nothing on a brochure is worth making someone motion-sick over. */
+@media (prefers-reduced-motion: reduce) {
+  .atelier *,
+  .atelier *::before,
+  .atelier *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+
+  .atelier .reveal {
+    opacity: 1;
+    transform: none;
+  }
+
+  .atelier .draw path,
+  .atelier .draw line,
+  .atelier .draw circle,
+  .atelier .draw ellipse {
+    stroke-dashoffset: 0;
+  }
+}

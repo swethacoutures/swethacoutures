@@ -11,8 +11,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { DatePicker } from '@/components/ui/date-picker';
 import { Plus, Users, Clock, CheckCircle, Search, Edit, Trash2, Phone, MessageCircle, Filter, X, UserCheck, Fingerprint, Wallet, CalendarClock } from 'lucide-react';
 import { collection, addDoc, getDocs, updateDoc, deleteDoc, doc, serverTimestamp, query, orderBy, where, onSnapshot } from 'firebase/firestore';
-import { createUserWithEmailAndPassword } from 'firebase/auth';
-import { auth, db } from '@/lib/firebase';
+import { createLoginForOtherUser, db } from '@/lib/firebase';
 import { toast } from '@/hooks/use-toast';
 import { useNavigate } from 'react-router-dom';
 import LoadingSpinner from '@/components/LoadingSpinner';
@@ -64,7 +63,7 @@ const PAY_BASIS = {
   monthly: {
     label: 'Monthly salary (₹)',
     placeholder: 'e.g. 18000',
-    help: 'Paid per month, pro-rated by the days actually present (÷ working days × days present).',
+    help: 'Converted to an hourly rate and paid on the hours actually worked, with hours beyond a full month paid as overtime.',
     suffix: '/month',
   },
   daily: {
@@ -428,16 +427,53 @@ const Staff = () => {
           description: "Employee updated successfully",
         });
       } else {
-        // Create Firebase Auth user if email is provided
+        // Create a login if an email was given. This runs on a separate Firebase app
+        // instance — see `createLoginForOtherUser`. Doing it on the shared one signed the
+        // admin out and in as the new employee.
         if (formData.email) {
           try {
-            await createUserWithEmailAndPassword(auth, formData.email, password);
+            await createLoginForOtherUser(formData.email, password);
           } catch (authError) {
-            console.log('Auth user creation failed, continuing with staff creation');
+            // An address already in use is normal when re-adding someone; anything else is
+            // worth surfacing, because the employee will be saved without a way to log in.
+            const { code, message } = (authError ?? {}) as { code?: string; message?: string };
+            if (code !== 'auth/email-already-in-use') {
+              toast({
+                title: 'Employee saved, but the login was not created',
+                description: message || 'Create their login from Firebase directly.',
+                variant: 'destructive',
+              });
+            }
+            console.error('Auth user creation failed, continuing with staff creation', authError);
           }
         }
-        
-        await addDoc(collection(db, 'staff'), staffData);
+
+        const created = await addDoc(collection(db, 'staff'), staffData);
+
+        /**
+         * Link the new employee to their fingerprint records straight away.
+         *
+         * This only ran on edit before, so an employee added with a fingerprint employee
+         * selected was saved with the code but never joined up on the attendance side —
+         * their payable salary showed as "No attendance record linked" until someone
+         * happened to open the form again and press Save a second time.
+         */
+        try {
+          await syncPayToAttendance(
+            {
+              id: created.id,
+              name: formData.name,
+              salaryMode: formData.salaryMode,
+              salaryAmount: rate,
+              bonus: staffData.bonus,
+              attendanceEmpCode: formData.attendanceEmpCode,
+            },
+            attendanceEmployees
+          );
+        } catch (syncError) {
+          console.error('Could not sync pay to attendance:', syncError);
+        }
+
         toast({
           title: "Success",
           description: `Employee added successfully. Password: ${password}`,

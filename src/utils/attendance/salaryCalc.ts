@@ -73,48 +73,94 @@ export function countWorkingDays(
   return count;
 }
 
-/**
- * Paid hours for one day: the punch-to-punch span, minus the unpaid break.
- *
- * The break is only taken off when the day is actually longer than it — someone who came
- * in for a half-hour errand should not end up with negative hours. The deduction happens
- * here at calculation time rather than being baked into the stored record, so changing the
- * break length recalculates history instead of corrupting it.
- */
-export function paidHoursForDay(
-  record: Pick<AttendanceRecord, 'checkIn' | 'checkOut' | 'hoursWorked' | 'punches'>,
-  settings: AttendanceSettings = DEFAULT_ATTENDANCE_SETTINGS
-): number {
-  const punches = (record.punches || []).filter(Boolean).slice().sort();
+/** Minutes between two 'HH:mm' times, handling a shift that crosses midnight. */
+function minutesBetween(from: string, to: string): number {
+  return Math.round(hoursBetween(from, to) * 60);
+}
 
-  /**
-   * Four or more punches means they clocked out for lunch and back in, so the day splits
-   * into real worked segments: (1st→2nd) is the first half, (3rd→4th) the second, and the
-   * gap between them is lunch — excluded exactly, no estimating.
-   *
-   * An odd punch at the end is someone who has not clocked out yet. It is left unpaired
-   * rather than guessed at, so a forgotten evening punch shows as short hours instead of
-   * silently paying for time nobody can account for.
-   */
-  if (punches.length >= 3) {
-    let total = 0;
-    for (let i = 0; i + 1 < punches.length; i += 2) {
-      total += hoursBetween(punches[i], punches[i + 1]);
-    }
-    return round2(total);
+/**
+ * Drops repeat presses on the same finger.
+ *
+ * People press the sensor two or three times when they are not sure it registered, and the
+ * terminal itself re-reports a batch after a failed handshake. One real day in this shop's
+ * data has sixteen punches between 17:47 and 19:27 — nobody left and came back eight times.
+ * Anything arriving within `minPunchGapMinutes` of the punch we already kept is the same
+ * event, so it is discarded before any in/out meaning is read into the sequence.
+ */
+export function dedupePunches(punches: string[], minGapMinutes: number): string[] {
+  const sorted = (punches || []).filter(Boolean).slice().sort();
+  if (sorted.length === 0) return [];
+
+  const gap = Math.max(0, minGapMinutes);
+  const kept = [sorted[0]];
+
+  for (const punch of sorted.slice(1)) {
+    if (minutesBetween(kept[kept.length - 1], punch) >= gap) kept.push(punch);
   }
 
-  if (!record.checkIn || !record.checkOut) return 0;
+  return kept;
+}
 
-  /**
-   * Two punches only — nobody clocked out for lunch, so the span still contains it.
-   * The configured break is deducted instead. Only when the day is actually longer than
-   * the break: a half-hour errand must not come out negative.
-   */
-  const span = record.hoursWorked || hoursBetween(record.checkIn, record.checkOut);
-  const breakHours = (settings.breakMinutes || 0) / 60;
+/**
+ * Paid hours for one day.
+ *
+ * The rule, in order:
+ *
+ * 1. A record an admin has corrected by hand wins outright. The stored `punches` array
+ *    survives a manual edit (the write merges), so reading punches first would quietly
+ *    ignore the correction and keep paying the number the admin just fixed — the edit
+ *    would show in the table and do nothing to the payslip.
+ * 2. Otherwise the punches are de-duplicated, then paired: 1st→2nd is a worked stretch,
+ *    2nd→3rd is time away, 3rd→4th worked again, and so on.
+ * 3. Time away only comes off the day if it lasted at least `minBreakMinutes`. Stepping
+ *    out for three minutes is not a lunch break, and after de-duplication a short gap is
+ *    just as likely to be noise in the pairing as a real absence.
+ * 4. A day with only two punches never left for lunch, so the configured fixed break is
+ *    deducted instead — but only if the day is longer than the break, so a half-hour
+ *    errand cannot come out negative.
+ *
+ * All of this happens at calculation time rather than being baked into the stored record,
+ * so changing a rule recalculates history instead of corrupting it.
+ */
+export function paidHoursForDay(
+  record: Pick<
+    AttendanceRecord,
+    'checkIn' | 'checkOut' | 'hoursWorked' | 'punches' | 'manuallyEdited'
+  >,
+  settings: AttendanceSettings = DEFAULT_ATTENDANCE_SETTINGS
+): number {
+  const breakHours = Math.max(0, settings.breakMinutes ?? DEFAULT_ATTENDANCE_SETTINGS.breakMinutes) / 60;
 
-  return round2(span > breakHours ? span - breakHours : span);
+  /** The two-punch rule: one span, one fixed break. */
+  const spanMinusFixedBreak = (): number => {
+    if (!record.checkIn || !record.checkOut) return 0;
+    const span = record.hoursWorked || hoursBetween(record.checkIn, record.checkOut);
+    return round2(span > breakHours ? span - breakHours : span);
+  };
+
+  // (1) A hand-corrected day is the admin's word against the device's. The admin wins.
+  if (record.manuallyEdited) return spanMinusFixedBreak();
+
+  const minPunchGap = settings.minPunchGapMinutes ?? DEFAULT_ATTENDANCE_SETTINGS.minPunchGapMinutes;
+  const minBreak = settings.minBreakMinutes ?? DEFAULT_ATTENDANCE_SETTINGS.minBreakMinutes;
+  const punches = dedupePunches(record.punches || [], minPunchGap);
+
+  if (punches.length >= 3) {
+    // (2) + (3) Pay the whole span, less each stretch spent away from the shop.
+    const spanMinutes = minutesBetween(punches[0], punches[punches.length - 1]);
+
+    let awayMinutes = 0;
+    // Odd-indexed gaps are out→in. Even-indexed ones are time actually worked.
+    for (let i = 1; i + 1 < punches.length; i += 2) {
+      const gap = minutesBetween(punches[i], punches[i + 1]);
+      if (gap >= minBreak) awayMinutes += gap;
+    }
+
+    return round2(Math.max(0, spanMinutes - awayMinutes) / 60);
+  }
+
+  // (4) Two punches (or one, after de-duplication) — no lunch punch to work from.
+  return spanMinusFixedBreak();
 }
 
 /** Minutes between two 'HH:mm' times, as decimal hours. Returns 0 if either is missing. */

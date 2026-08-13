@@ -338,6 +338,47 @@ export function summariseDeviceHealth(
 }
 
 /**
+ * Deletes many raw punches at once.
+ *
+ * As with the single-punch delete below, the day records are deliberately left alone —
+ * clearing the raw feed must not silently rewrite anyone's paid hours. One audit entry is
+ * written for the whole operation rather than one per punch, so a bulk clear-out cannot
+ * bury the individual corrections the log exists to preserve.
+ */
+export async function deletePunches(
+  punches: Pick<DevicePunch, 'id' | 'userPin' | 'employeeName' | 'punchDate'>[],
+  context: string
+): Promise<number> {
+  if (punches.length === 0) return 0;
+
+  for (let offset = 0; offset < punches.length; offset += BATCH_LIMIT) {
+    const batch = writeBatch(db);
+    for (const punch of punches.slice(offset, offset + BATCH_LIMIT)) {
+      batch.delete(doc(db, PUNCHES_COLLECTION, punch.id));
+    }
+    await batch.commit();
+  }
+
+  const dates = punches.map((punch) => punch.punchDate).filter(Boolean).sort();
+  await logActivity({
+    action: 'delete',
+    entity: 'devicePunch',
+    entityId: `bulk:${punches.length}`,
+    summary:
+      `Deleted ${punches.length} raw punch${punches.length === 1 ? '' : 'es'} (${context})` +
+      (dates.length ? ` covering ${dates[0]} to ${dates[dates.length - 1]}` : ''),
+    before: {
+      count: punches.length,
+      firstDate: dates[0],
+      lastDate: dates[dates.length - 1],
+      employees: [...new Set(punches.map((punch) => punch.employeeName || punch.userPin))],
+    },
+  });
+
+  return punches.length;
+}
+
+/**
  * Deletes a single raw punch.
  *
  * The day record is deliberately NOT recalculated here. A punch and the day it belongs to

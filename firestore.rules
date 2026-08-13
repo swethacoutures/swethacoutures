@@ -51,7 +51,18 @@ service cloud.firestore {
       allow read: if isAdmin();
       // Approving a device clears the `parked` flag on the punches it held.
       allow update: if isAdmin();
-      allow create, delete: if false;
+      /**
+       * An admin may delete a punch; nobody may invent one.
+       *
+       * Those are different risks. A punch a person can *write* is attendance conjured out
+       * of nothing, which would make the whole audit trail worthless — so create stays
+       * denied. Deleting is the opposite: a duplicate press or a test punch left over from
+       * commissioning the device has to be removable, and every deletion is written to
+       * `activityLog`, which is itself append-only. This previously read `delete: if false`
+       * while the Punches tab offered a delete button, so the button could only ever fail.
+       */
+      allow delete: if isAdmin();
+      allow create: if false;
     }
 
     match /deviceRawLogs/{logId} {

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -10,7 +10,7 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
-import { Plus, Settings2, Trash2, Fingerprint, Download } from 'lucide-react';
+import { Plus, Settings2, Trash2, Fingerprint, Download, Link2 } from 'lucide-react';
 import { toast } from '@/hooks/use-toast';
 import { deleteEmployee } from '@/utils/attendance/attendanceStore';
 import { requestNamesFromDevice } from '@/utils/attendance/deviceStore';
@@ -48,6 +48,11 @@ const EmployeesTab: React.FC<EmployeesTabProps> = ({
 }) => {
   const [dialogOpen, setDialogOpen] = useState(false);
   const [fetchingNames, setFetchingNames] = useState(false);
+
+  const staffById = useMemo(
+    () => new Map(staffOptions.map((option) => [option.id, option.name])),
+    [staffOptions]
+  );
 
   /**
    * Anyone whose name is still just their PIN. Punches carry no name, so a new person
@@ -197,7 +202,22 @@ const EmployeesTab: React.FC<EmployeesTabProps> = ({
                               <Badge variant="outline" className="text-xs">Inactive</Badge>
                             )}
                           </div>
-                          <div className="text-xs text-gray-500">Code {employee.empCode}</div>
+                          <div className="text-xs text-gray-500">
+                            Code {employee.empCode}
+                            {employee.department ? ` · ${employee.department}` : ''}
+                          </div>
+                          {/* The link is the whole point of this row existing alongside the
+                              Employees page, so it is stated rather than left to be guessed. */}
+                          <div className="mt-0.5 flex items-center gap-1 text-xs">
+                            <Link2 className="h-3 w-3 shrink-0 text-gray-400" />
+                            {staffById.get(employee.linkedStaffId || '') ? (
+                              <span className="text-green-700 dark:text-green-400">
+                                {staffById.get(employee.linkedStaffId || '')}
+                              </span>
+                            ) : (
+                              <span className="text-gray-400">Not linked to a staff member</span>
+                            )}
+                          </div>
                         </TableCell>
                         <TableCell>
                           {unset ? (

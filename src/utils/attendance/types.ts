@@ -92,8 +92,24 @@ export interface AttendanceSettings {
   officeEndTime: string;
   /** Paid hours in a normal day. The divisor behind the hourly rate. */
   standardHoursPerDay: number;
-  /** Unpaid break deducted from each worked day. 60 = one hour. */
+  /**
+   * Unpaid break deducted from a day where nobody punched out for lunch. When the punches
+   * do show the person leaving and coming back, the real gap is used instead of this.
+   */
   breakMinutes: number;
+  /**
+   * Repeat presses closer together than this are treated as one punch.
+   *
+   * People press the sensor again when they are unsure it read, and the terminal replays
+   * a batch after a failed handshake. Without this the extra presses are read as leaving
+   * and returning, which shreds the day into worthless fragments.
+   */
+  minPunchGapMinutes: number;
+  /**
+   * The shortest absence that counts as an unpaid break. Anything briefer stays paid —
+   * stepping out for three minutes is not lunch.
+   */
+  minBreakMinutes: number;
   /** Weekday numbers that are not working days. 0 = Sunday. */
   weeklyOffDays: number[];
   updatedAt?: string;
@@ -105,6 +121,8 @@ export const DEFAULT_ATTENDANCE_SETTINGS: AttendanceSettings = {
   officeEndTime: '18:00',
   standardHoursPerDay: 8,
   breakMinutes: 60,
+  minPunchGapMinutes: 5,
+  minBreakMinutes: 20,
   weeklyOffDays: [0],
 };
 
