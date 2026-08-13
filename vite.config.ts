@@ -112,6 +112,63 @@ function iclockDevApi(env: Record<string, string | undefined>): Plugin {
   };
 }
 
+/**
+ * Serves POST /api/appointments during `npm run dev`.
+ *
+ * In production Vercel runs api/appointments.ts; both call the same
+ * handleAppointmentRequest, so the booking form can be exercised end to end locally
+ * without deploying — which is the only way to know the form actually reaches Firestore.
+ */
+function appointmentsDevApi(env: Record<string, string | undefined>): Plugin {
+  return {
+    name: "appointments-dev-api",
+    configureServer(server) {
+      server.middlewares.use(async (req, res, next) => {
+        if (!(req.url || "").startsWith("/api/appointments")) return next();
+
+        const json = (status: number, body: unknown) => {
+          res.statusCode = status;
+          res.setHeader("Content-Type", "application/json; charset=utf-8");
+          res.setHeader("Cache-Control", "no-store");
+          res.end(JSON.stringify(body));
+        };
+
+        if ((req.method || "GET").toUpperCase() !== "POST") {
+          res.setHeader("Allow", "POST");
+          return json(405, { ok: false, error: "Use POST." });
+        }
+
+        const chunks: Buffer[] = [];
+        for await (const chunk of req) {
+          chunks.push(typeof chunk === "string" ? Buffer.from(chunk) : chunk);
+        }
+
+        try {
+          const payload = JSON.parse(Buffer.concat(chunks).toString("utf8") || "{}");
+          // Imported here rather than at module scope so the Vite config still loads when
+          // firebase-admin or its credentials are absent.
+          const { getAdminDb, createFirestoreStore } = await import("./api/_firebaseAdmin");
+          const { handleAppointmentRequest } = await import("./api/_appointmentIntake");
+
+          const store = createFirestoreStore(getAdminDb(env as NodeJS.ProcessEnv));
+          const result = await handleAppointmentRequest(payload, store);
+
+          console.log(`\x1b[35m[appointments]\x1b[0m ${result.log}`);
+          json(result.status, result.body);
+        } catch (error) {
+          console.error(
+            `\x1b[31m[appointments]\x1b[0m ${error instanceof Error ? error.message : error}`
+          );
+          json(500, {
+            ok: false,
+            error: "We could not save that just now. Please call or WhatsApp us instead.",
+          });
+        }
+      });
+    },
+  };
+}
+
 // https://vitejs.dev/config/
 export default defineConfig(({ mode }) => {
   // Third argument '' disables the VITE_ prefix filter so the server-only
@@ -123,7 +180,7 @@ export default defineConfig(({ mode }) => {
       host: "::",
       port: 8080,
     },
-    plugins: [react(), iclockDevApi(env)],
+    plugins: [react(), iclockDevApi(env), appointmentsDevApi(env)],
     resolve: {
       alias: {
         "@": path.resolve(__dirname, "./src"),

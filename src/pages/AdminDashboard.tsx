@@ -17,6 +17,7 @@ import LoadingSpinner from '@/components/LoadingSpinner';
 import IncomeExpensesCard from '@/components/admin/IncomeExpensesCard';
 import PendingPaymentsPanel from '@/components/admin/PendingPaymentsPanel';
 import PendingBillsPanel from '@/components/admin/PendingBillsPanel';
+import AttendanceTodayPanel from '@/components/admin/AttendanceTodayPanel';
 import { formatCurrency } from '@/utils/billingUtils';
 
 /**
@@ -202,11 +203,21 @@ const AdminDashboard = () => {
           ))}
         </div>
 
-        {/* The two lists the admin works from */}
-        <div className="grid grid-cols-1 gap-4 sm:gap-6 xl:grid-cols-2">
+        {/*
+          The two things the owner acts on first thing in the morning: who owes money, and
+          who turned up. Payments to Collect can now record a payment itself, so the
+          bill-by-bill Pending Bills list below is a detail view rather than a headline —
+          it stays available but starts folded away.
+        */}
+        {/* `items-start` so each card is its own natural height. Without it the grid
+            stretches both to match the taller one, and a shop with three employees gets a
+            half-empty attendance card as tall as a 39-customer debt list. */}
+        <div className="grid grid-cols-1 items-start gap-4 sm:gap-6 xl:grid-cols-2">
           <PendingPaymentsPanel onLoaded={setCollections} />
-          <PendingBillsPanel />
+          <AttendanceTodayPanel />
         </div>
+
+        <PendingBillsPanel defaultCollapsed />
 
         {/* Money snapshot */}
         <IncomeExpensesCard onClick={() => navigate('/income-expenses')} />

@@ -21,6 +21,8 @@ export interface Service {
   detail: string[];
   /** Lowest configured rate, in rupees. Omitted where the shop quotes per piece. */
   from?: number;
+  /** Illustrating photograph, for the three services that carry one. */
+  image?: string;
 }
 
 export const SERVICES: Service[] = [
@@ -31,6 +33,7 @@ export const SERVICES: Service[] = [
       'The heart of the house. Blouses, dresses, churidars and lehengas cut to your own measurements and finished by hand.',
     detail: ['Simple blouse', 'Saree blouse', 'Churidar', 'Lehenga', 'Dresses & gowns'],
     from: 500,
+    image: '/images/craft-pinning.webp',
   },
   {
     no: '02',
@@ -45,6 +48,7 @@ export const SERVICES: Service[] = [
     blurb:
       'Matching a blouse to a saree, refreshing a faded favourite, or taking a length of raw fabric to the exact shade you had in mind.',
     detail: ['Shade matching', 'Full-length dyeing', 'Lace & border dyeing'],
+    image: '/images/craft-threads.webp',
   },
   {
     no: '04',
@@ -53,6 +57,7 @@ export const SERVICES: Service[] = [
       'Aari and machine embroidery worked onto blouses, yokes and borders — from a single motif to a fully covered panel.',
     detail: ['Blouse embroidery', 'Yoke & neckline work', 'Border embroidery'],
     from: 800,
+    image: '/images/craft-embroidery.webp',
   },
   {
     no: '05',
@@ -81,8 +86,11 @@ export const SERVICES: Service[] = [
 export interface Product {
   name: string;
   note: string;
-  /** Which line-art drawing accompanies the card. */
+  /** Which line-art drawing accompanies the card when the photograph is still loading. */
   art: 'blouse' | 'saree' | 'lehenga' | 'dress' | 'dupatta' | 'frock';
+  image: string;
+  /** Describes the photograph for anyone who cannot see it. */
+  alt: string;
 }
 
 export const PRODUCTS: Product[] = [
@@ -90,31 +98,43 @@ export const PRODUCTS: Product[] = [
     name: 'Blouses',
     note: 'Saree blouses, designer backs, princess-cut and padded — the most-made piece in the shop.',
     art: 'blouse',
+    image: '/images/product-blouse.webp',
+    alt: 'A saree blouse in red with gold border work.'
   },
   {
     name: 'Sarees',
     note: 'Tussar, silk, organza and cotton. Falls, lining, tassels and pre-pleating on request.',
     art: 'saree',
+    image: '/images/product-saree.webp',
+    alt: 'A gold silk saree with a woven border.'
   },
   {
     name: 'Lehengas',
     note: 'Bridal and festive sets cut, lined and can-canned to hold their shape all evening.',
     art: 'lehenga',
+    image: '/images/product-lehenga.webp',
+    alt: 'A red bridal lehenga with heavy gold work.'
   },
   {
     name: 'Dresses & Gowns',
     note: 'Long dresses, A-lines and party gowns stitched from your fabric or ours.',
     art: 'dress',
+    image: '/images/product-dress.webp',
+    alt: 'A pale green occasion outfit with a jewelled neckline.'
   },
   {
     name: 'Dupattas & Stoles',
     note: 'Dyed to match, edged with lace, finished with tassels or left plain and simply hemmed well.',
     art: 'dupatta',
+    image: '/images/product-dupatta.webp',
+    alt: 'A purple and gold silk drape.'
   },
   {
     name: 'Frocks & Kidswear',
     note: 'Little occasion frocks with the same finishing as the grown-up pieces.',
     art: 'frock',
+    image: '/images/product-kids.webp',
+    alt: 'A little girl in a gold and navy occasion frock.'
   },
 ];
 

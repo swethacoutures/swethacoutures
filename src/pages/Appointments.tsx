@@ -339,10 +339,25 @@ const Appointments = () => {
   const filteredAppointments = appointments.filter(appointment => {
     if (!appointment) return false;
     
-    const matchesSearch = (
-      (appointment.customerName || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
-      (appointment.purpose || '').toLowerCase().includes(searchTerm.toLowerCase())
-    );
+    const term = searchTerm.trim().toLowerCase();
+
+    /**
+     * Phone was in the placeholder ("search by customer, phone or purpose") but was never
+     * actually searched. Typing a number found nothing, which is the one search a shop
+     * makes constantly — somebody rings, you have their number and not their spelling.
+     *
+     * Digits are compared with the punctuation stripped from both sides, so "98765 43210",
+     * "+91-9876543210" and "9876543210" all match each other.
+     */
+    const digits = term.replace(/\D/g, '');
+    const storedDigits = (appointment.customerPhone || '').replace(/\D/g, '');
+
+    const matchesSearch =
+      !term ||
+      (appointment.customerName || '').toLowerCase().includes(term) ||
+      (appointment.purpose || '').toLowerCase().includes(term) ||
+      (appointment.notes || '').toLowerCase().includes(term) ||
+      (digits.length > 0 && storedDigits.includes(digits));
     
     const matchesStatus = statusFilter === 'all' || appointment.status === statusFilter;
     

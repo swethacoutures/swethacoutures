@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Menu, X, Phone } from 'lucide-react';
 import { CONTACT, NAV_LINKS } from './landingContent';
-import { Monogram } from './ornaments';
+import Logo from './Logo';
 
 interface SiteHeaderProps {
   onBook: () => void;
@@ -11,9 +11,13 @@ interface SiteHeaderProps {
 /**
  * The site header.
  *
- * Transparent over the hero so the drawing behind it is not boxed in, then it takes on
- * the paper ground and a gold hairline once the page scrolls — the change is what tells
- * you the bar is now floating over content rather than sitting in it.
+ * Transparent over the hero photograph so the image is not boxed in, then it takes on the
+ * dark ground and a gold hairline once the page scrolls — the change is what tells you the
+ * bar is now floating over content rather than sitting in it.
+ *
+ * The logo is sized by height (see Logo.tsx) so the mark, the wordmark and the nav all sit
+ * on one optical line at every breakpoint — including phones, where the shop's name must
+ * still be readable rather than reduced to an emblem.
  */
 const SiteHeader: React.FC<SiteHeaderProps> = ({ onBook }) => {
   const [scrolled, setScrolled] = useState(false);
@@ -57,49 +61,67 @@ const SiteHeader: React.FC<SiteHeaderProps> = ({ onBook }) => {
     };
   }, [menuOpen]);
 
+  // Escape must close it — the close button can scroll out of reach on a short screen.
+  useEffect(() => {
+    if (!menuOpen) return;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setMenuOpen(false);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [menuOpen]);
+
   return (
     <>
       <header
         className={`fixed inset-x-0 top-0 z-50 transition-all duration-500 ${
           scrolled
-            ? 'border-b border-[var(--gold)]/25 bg-[var(--paper)]/92 backdrop-blur-md'
+            ? 'border-b border-[var(--ink-line)] bg-[var(--ink)]/92 backdrop-blur-md'
             : 'border-b border-transparent'
         }`}
       >
-        <div className="mx-auto flex max-w-[var(--shell)] items-center justify-between gap-6 px-5 py-4 sm:px-8 lg:px-12">
+        <div className="mx-auto flex max-w-[var(--shell)] items-center justify-between gap-4 px-4 py-3 sm:px-6 sm:py-4 lg:px-10">
           <a
             href="#top"
-            className="group flex items-center gap-3"
-            aria-label={`${CONTACT.name} — home`}
+            className="sheen relative flex items-center overflow-hidden py-1"
+            aria-label={`${CONTACT.name} — top of page`}
           >
-            <Monogram className="h-9 w-9 shrink-0 text-[var(--madder)] transition-transform duration-500 group-hover:rotate-[8deg]" />
-            <span className="leading-none">
-              <span className="ff-display block text-[1.35rem] tracking-tight text-[var(--ink)] sm:text-[1.5rem]">
-                Swetha's <span className="italic">Couture</span>
-              </span>
-              <span className="mt-1 block text-[0.5625rem] uppercase tracking-[0.32em] text-[var(--ink-muted)]">
-                Kakinada · Est. Atelier
-              </span>
-            </span>
+            {/*
+              The `bar` variant, at every width — the shop's name has to be readable on a
+              phone too, and the supplied lockup renders it far too small at header sizes.
+              See Logo.tsx for why the mark and the script are drawn as two images.
+            */}
+            <Logo
+              variant="bar"
+              height={scrolled ? 34 : 40}
+              priority
+              className="transition-all duration-500 sm:hidden"
+            />
+            <Logo
+              variant="bar"
+              height={scrolled ? 40 : 50}
+              priority
+              className="hidden transition-all duration-500 sm:inline-flex"
+            />
           </a>
 
-          <nav className="hidden items-center gap-8 lg:flex" aria-label="Primary">
+          <nav className="hidden items-center gap-7 lg:flex" aria-label="Primary">
             {NAV_LINKS.map((link) => (
               <a
                 key={link.href}
                 href={link.href}
                 data-active={activeSection === link.href}
-                className="link-stitch text-[0.7rem] font-medium uppercase tracking-[0.2em] text-[var(--ink-soft)] transition-colors duration-300 hover:text-[var(--madder)] data-[active=true]:text-[var(--madder)]"
+                className="link-stitch text-[0.68rem] font-medium uppercase tracking-[0.2em] text-[var(--cream-dim)] transition-colors duration-300 hover:text-[var(--gold-light)] data-[active=true]:text-[var(--gold-light)]"
               >
                 {link.label}
               </a>
             ))}
           </nav>
 
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2 sm:gap-3">
             <a
               href={`tel:+91${CONTACT.phone}`}
-              className="hidden items-center gap-2 text-[0.78rem] tracking-wide text-[var(--ink-soft)] transition-colors hover:text-[var(--madder)] md:flex"
+              className="hidden items-center gap-2 text-[0.78rem] tracking-wide text-[var(--cream-dim)] transition-colors hover:text-[var(--gold-light)] xl:flex"
             >
               <Phone className="h-3.5 w-3.5" />
               {CONTACT.phone}
@@ -108,7 +130,7 @@ const SiteHeader: React.FC<SiteHeaderProps> = ({ onBook }) => {
             <button
               type="button"
               onClick={onBook}
-              className="hidden bg-[var(--madder)] px-5 py-3 text-[0.65rem] font-medium uppercase tracking-[0.22em] text-[var(--paper-warm)] transition-colors duration-300 hover:bg-[var(--madder-bright)] sm:block"
+              className="shine hidden border border-[var(--gold)] bg-[var(--gold)] px-5 py-2.5 text-[0.62rem] font-medium uppercase tracking-[0.22em] text-[var(--ink)] transition-colors duration-300 hover:bg-transparent hover:text-[var(--gold-light)] sm:block"
             >
               Book Appointment
             </button>
@@ -116,7 +138,7 @@ const SiteHeader: React.FC<SiteHeaderProps> = ({ onBook }) => {
             <button
               type="button"
               onClick={() => setMenuOpen(true)}
-              className="flex h-10 w-10 items-center justify-center text-[var(--ink)] lg:hidden"
+              className="-mr-1 flex h-10 w-10 items-center justify-center text-[var(--cream)] lg:hidden"
               aria-label="Open menu"
               aria-expanded={menuOpen}
             >
@@ -126,10 +148,10 @@ const SiteHeader: React.FC<SiteHeaderProps> = ({ onBook }) => {
         </div>
       </header>
 
-      {/* Mobile menu — a full sheet of ink rather than a dropdown, so the small screen
-          gets the same sense of occasion the desktop layout has. */}
+      {/* Mobile menu — a full sheet, so the small screen gets the same sense of occasion
+          the desktop layout has. */}
       <div
-        className={`fixed inset-0 z-[60] lg:hidden ${menuOpen ? '' : 'pointer-events-none'}`}
+        className={`fixed inset-0 z-[70] lg:hidden ${menuOpen ? '' : 'pointer-events-none'}`}
         aria-hidden={!menuOpen}
       >
         <div
@@ -138,17 +160,17 @@ const SiteHeader: React.FC<SiteHeaderProps> = ({ onBook }) => {
           }`}
         />
 
-        <div className="relative flex h-full flex-col px-6 py-5">
+        <div className="relative flex h-full flex-col overflow-y-auto px-5 py-4">
           <div className="flex items-center justify-between">
-            <Monogram
-              className={`h-9 w-9 text-[var(--gold-light)] transition-opacity duration-500 ${
-                menuOpen ? 'opacity-100' : 'opacity-0'
-              }`}
-            />
+            <div
+              className={`transition-opacity duration-500 ${menuOpen ? 'opacity-100' : 'opacity-0'}`}
+            >
+              <Logo variant="bar" height={40} />
+            </div>
             <button
               type="button"
               onClick={() => setMenuOpen(false)}
-              className={`flex h-10 w-10 items-center justify-center text-[var(--paper)] transition-opacity duration-500 ${
+              className={`-mr-1 flex h-10 w-10 items-center justify-center text-[var(--cream)] transition-opacity duration-500 ${
                 menuOpen ? 'opacity-100' : 'opacity-0'
               }`}
               aria-label="Close menu"
@@ -157,20 +179,20 @@ const SiteHeader: React.FC<SiteHeaderProps> = ({ onBook }) => {
             </button>
           </div>
 
-          <nav className="flex flex-1 flex-col justify-center gap-1" aria-label="Mobile">
+          <nav className="flex flex-1 flex-col justify-center py-8" aria-label="Mobile">
             {NAV_LINKS.map((link, index) => (
               <a
                 key={link.href}
                 href={link.href}
                 onClick={() => setMenuOpen(false)}
-                className="ff-display border-b border-[var(--paper)]/10 py-4 text-[2rem] text-[var(--paper)] transition-all duration-500 sm:text-[2.5rem]"
+                className="ff-display flex items-baseline gap-4 border-b border-[var(--ink-line)] py-4 text-[1.85rem] text-[var(--cream)] transition-all duration-500 sm:text-[2.4rem]"
                 style={{
                   opacity: menuOpen ? 1 : 0,
                   transform: menuOpen ? 'none' : 'translateY(1rem)',
                   transitionDelay: menuOpen ? `${120 + index * 60}ms` : '0ms',
                 }}
               >
-                <span className="mr-4 align-super text-[0.7rem] tracking-[0.2em] text-[var(--gold)]">
+                <span className="ff-sans text-[0.65rem] tracking-[0.2em] text-[var(--gold)]">
                   0{index + 1}
                 </span>
                 {link.label}
@@ -179,11 +201,8 @@ const SiteHeader: React.FC<SiteHeaderProps> = ({ onBook }) => {
           </nav>
 
           <div
-            className="space-y-4 pb-4 transition-all duration-500"
-            style={{
-              opacity: menuOpen ? 1 : 0,
-              transitionDelay: menuOpen ? '420ms' : '0ms',
-            }}
+            className="space-y-4 pb-2 transition-all duration-500"
+            style={{ opacity: menuOpen ? 1 : 0, transitionDelay: menuOpen ? '420ms' : '0ms' }}
           >
             <button
               type="button"
@@ -191,11 +210,11 @@ const SiteHeader: React.FC<SiteHeaderProps> = ({ onBook }) => {
                 setMenuOpen(false);
                 onBook();
               }}
-              className="w-full bg-[var(--madder)] px-6 py-4 text-[0.7rem] font-medium uppercase tracking-[0.24em] text-[var(--paper-warm)]"
+              className="shine w-full bg-[var(--gold)] px-6 py-4 text-[0.68rem] font-medium uppercase tracking-[0.24em] text-[var(--ink)]"
             >
               Book Appointment
             </button>
-            <div className="flex items-center justify-between text-[0.78rem] text-[var(--paper)]/60">
+            <div className="flex items-center justify-between text-[0.78rem] text-[var(--cream-muted)]">
               <a href={`tel:+91${CONTACT.phone}`} className="hover:text-[var(--gold-light)]">
                 {CONTACT.phone}
               </a>

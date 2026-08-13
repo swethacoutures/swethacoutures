@@ -2,42 +2,32 @@ import React from 'react';
 import { Link } from 'react-router-dom';
 import { ArrowUp } from 'lucide-react';
 import { CONTACT, NAV_LINKS, SERVICES } from './landingContent';
-import { Monogram, StitchDivider } from './ornaments';
+import Logo from './Logo';
 
 const year = new Date().getFullYear();
 
 const SiteFooter: React.FC = () => (
-  <footer className="relative border-t border-[var(--line)] bg-[var(--paper-warm)] pt-16">
-    <div className="mx-auto max-w-[var(--shell)] px-5 sm:px-8 lg:px-12">
-      <div className="grid gap-12 lg:grid-cols-12">
+  <footer className="weave relative border-t border-[var(--ink-line)] bg-[var(--ink-raised)] pt-14 sm:pt-16">
+    <div className="mx-auto max-w-[var(--shell)] px-4 sm:px-6 lg:px-10">
+      <div className="grid gap-10 sm:grid-cols-2 lg:grid-cols-12 lg:gap-8">
         {/* Identity */}
-        <div className="lg:col-span-4">
-          <div className="flex items-center gap-3">
-            <Monogram className="h-10 w-10 text-[var(--madder)]" />
-            <span>
-              <span className="ff-display block text-[1.5rem] leading-none text-[var(--ink)]">
-                Swetha's <span className="italic">Couture</span>
-              </span>
-              <span className="mt-1.5 block text-[0.5625rem] uppercase tracking-[0.3em] text-[var(--ink-muted)]">
-                {CONTACT.tagline}
-              </span>
-            </span>
-          </div>
+        <div className="sm:col-span-2 lg:col-span-4">
+          <Logo variant="bar" height={58} />
 
-          <p className="mt-6 max-w-xs text-[0.85rem] leading-relaxed text-[var(--ink-soft)]">
+          <p className="mt-6 max-w-xs text-[0.85rem] leading-relaxed text-[var(--cream-muted)]">
             {CONTACT.addressLines.join(', ')}.
           </p>
 
           <div className="mt-5 space-y-1.5 text-[0.85rem]">
             <a
               href={`tel:+91${CONTACT.phone}`}
-              className="block text-[var(--ink-soft)] transition-colors hover:text-[var(--madder)]"
+              className="block text-[var(--cream-dim)] transition-colors hover:text-[var(--gold-light)]"
             >
               {CONTACT.phone}
             </a>
             <a
               href={`mailto:${CONTACT.email}`}
-              className="block break-all text-[var(--ink-soft)] transition-colors hover:text-[var(--madder)]"
+              className="wrap-anywhere block text-[var(--cream-dim)] transition-colors hover:text-[var(--gold-light)]"
             >
               {CONTACT.email}
             </a>
@@ -46,7 +36,7 @@ const SiteFooter: React.FC = () => (
 
         {/* Navigation */}
         <nav className="lg:col-span-3" aria-label="Footer">
-          <h2 className="text-[0.6rem] uppercase tracking-[0.28em] text-[var(--ink-muted)]">
+          <h2 className="text-[0.58rem] uppercase tracking-[0.28em] text-[var(--cream-faint)]">
             Explore
           </h2>
           <ul className="mt-5 space-y-2.5">
@@ -54,7 +44,7 @@ const SiteFooter: React.FC = () => (
               <li key={link.href}>
                 <a
                   href={link.href}
-                  className="text-[0.88rem] text-[var(--ink-soft)] transition-colors hover:text-[var(--madder)]"
+                  className="text-[0.86rem] text-[var(--cream-dim)] transition-colors hover:text-[var(--gold-light)]"
                 >
                   {link.label}
                 </a>
@@ -65,7 +55,7 @@ const SiteFooter: React.FC = () => (
 
         {/* Services, so the footer earns its keep for search as well as for readers. */}
         <div className="lg:col-span-3">
-          <h2 className="text-[0.6rem] uppercase tracking-[0.28em] text-[var(--ink-muted)]">
+          <h2 className="text-[0.58rem] uppercase tracking-[0.28em] text-[var(--cream-faint)]">
             Services
           </h2>
           <ul className="mt-5 space-y-2.5">
@@ -73,7 +63,7 @@ const SiteFooter: React.FC = () => (
               <li key={service.no}>
                 <a
                   href="#services"
-                  className="text-[0.88rem] text-[var(--ink-soft)] transition-colors hover:text-[var(--madder)]"
+                  className="text-[0.86rem] text-[var(--cream-dim)] transition-colors hover:text-[var(--gold-light)]"
                 >
                   {service.title}
                 </a>
@@ -84,13 +74,13 @@ const SiteFooter: React.FC = () => (
 
         {/* Hours */}
         <div className="lg:col-span-2">
-          <h2 className="text-[0.6rem] uppercase tracking-[0.28em] text-[var(--ink-muted)]">
+          <h2 className="text-[0.58rem] uppercase tracking-[0.28em] text-[var(--cream-faint)]">
             Hours
           </h2>
           <ul className="mt-5 space-y-3">
             {CONTACT.hours.map((entry) => (
-              <li key={entry.days} className="text-[0.85rem] text-[var(--ink-soft)]">
-                <span className="block text-[var(--ink)]">{entry.days}</span>
+              <li key={entry.days} className="text-[0.85rem] text-[var(--cream-muted)]">
+                <span className="block text-[var(--cream-dim)]">{entry.days}</span>
                 <span>{entry.time}</span>
               </li>
             ))}
@@ -98,10 +88,10 @@ const SiteFooter: React.FC = () => (
         </div>
       </div>
 
-      <StitchDivider className="mt-14" />
+      <div className="rule-fade mt-12" />
 
-      <div className="flex flex-col gap-4 py-7 sm:flex-row sm:items-center sm:justify-between">
-        <p className="text-[0.75rem] text-[var(--ink-muted)]">
+      <div className="flex flex-col gap-4 py-6 sm:flex-row sm:items-center sm:justify-between">
+        <p className="text-[0.74rem] text-[var(--cream-faint)]">
           © {year} {CONTACT.name}. Kakinada, Andhra Pradesh.
         </p>
 
@@ -110,13 +100,13 @@ const SiteFooter: React.FC = () => (
               it is a staff door, not a feature. */}
           <Link
             to="/admin"
-            className="text-[0.72rem] uppercase tracking-[0.2em] text-[var(--ink-muted)] transition-colors hover:text-[var(--madder)]"
+            className="text-[0.7rem] uppercase tracking-[0.2em] text-[var(--cream-faint)] transition-colors hover:text-[var(--gold-light)]"
           >
             Staff Login
           </Link>
           <a
             href="#top"
-            className="group flex items-center gap-2 text-[0.72rem] uppercase tracking-[0.2em] text-[var(--ink-muted)] transition-colors hover:text-[var(--madder)]"
+            className="group flex items-center gap-2 text-[0.7rem] uppercase tracking-[0.2em] text-[var(--cream-faint)] transition-colors hover:text-[var(--gold-light)]"
           >
             Back to top
             <ArrowUp className="h-3.5 w-3.5 transition-transform duration-300 group-hover:-translate-y-0.5" />

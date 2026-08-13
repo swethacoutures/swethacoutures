@@ -1,49 +1,49 @@
 /**
  * Swetha's Couture — public site.
  *
- * Everything here is scoped under `.atelier` so the marketing site can have its own
- * typography, colour and texture without leaking into the admin app, which uses the
- * shadcn token set and has a dark mode. The public site is deliberately light-only:
- * a customer's brochure should not change appearance because the shop owner once
- * flipped a dark-mode switch inside the back office.
- *
- * The aesthetic: paper, ink and gold thread. No photography — the visual language is
- * drawn line-art of garments and a running-stitch rule that threads down the page.
+ * The palette is sampled straight out of `public/logo.png`: the gold ramp below is the
+ * logo's own (#a87824 shadow → #fcf0b4 highlight), and the ground is derived from the dark
+ * outline the gold is drawn against (#240c00). The logo is gold line-art on transparency,
+ * which is why the site is dark: on pale paper the mark goes flat and muddy, on espresso it
+ * reads as metal. Every colour on the page is one of these tokens.
  *
  * Two classes, deliberately: `.atelier` carries the tokens and utilities and goes on any
  * subtree that needs them — including the booking dialog, which Radix portals out to
- * document.body and would otherwise inherit the admin app's dark tokens. `.atelier-page`
- * adds the things that only make sense once, on the page root, such as the grain overlay.
+ * document.body and would otherwise inherit the admin app's tokens. `.atelier-page` adds
+ * the things that only make sense once, on the page root.
  */
 
 .atelier {
-  /* Warm neutrals — unbleached silk rather than screen white. */
-  --paper: #f7f1e6;
-  --paper-deep: #efe4d3;
-  --paper-warm: #fbf7f0;
+  /* --- the logo's gold, sampled from the file ------------------------------ */
+  --gold-deep: #a87824;
+  --gold: #c0903c;
+  --gold-mid: #cc9c48;
+  --gold-light: #d8b460;
+  --gold-pale: #f0d890;
+  --gold-highlight: #fcf0b4;
 
-  --ink: #17130f;
-  --ink-soft: #3d342c;
-  --ink-muted: #7d6f5d;
+  /* --- ground ------------------------------------------------------------- */
+  --ink: #100b07;
+  --ink-raised: #191108;
+  --ink-panel: #211710;
+  --ink-line: rgba(216, 180, 96, 0.16);
+  --ink-line-strong: rgba(216, 180, 96, 0.34);
 
-  /* Madder red — the kumkum/alta note that runs through Indian textile. */
-  --madder: #7a2b25;
-  --madder-bright: #9c3a2e;
+  /* --- type --------------------------------------------------------------- */
+  --cream: #f6efe3;
+  --cream-dim: rgba(246, 239, 227, 0.72);
+  --cream-muted: rgba(246, 239, 227, 0.52);
+  --cream-faint: rgba(246, 239, 227, 0.34);
 
-  /* Antique zari gold. Used as thread and hairline, never as a fill. */
-  --gold: #b08d3f;
-  --gold-light: #d9bc72;
-  --gold-pale: #e8d9b0;
-
-  --line: rgba(23, 19, 15, 0.14);
-  --line-soft: rgba(23, 19, 15, 0.08);
+  /* One warm accent, used sparingly — the gold has to stay the loudest thing. */
+  --madder: #9c3a2e;
 
   --display: 'Cormorant Garamond', 'Iowan Old Style', Georgia, serif;
   --sans: 'Jost', 'Avenir Next', 'Segoe UI', sans-serif;
 
-  --shell: 88rem;
+  --shell: 84rem;
 
-  color: var(--ink);
+  color: var(--cream);
   font-family: var(--sans);
   font-weight: 300;
   line-height: 1.6;
@@ -52,24 +52,27 @@
 }
 
 .atelier-page {
-  background-color: var(--paper);
+  background-color: var(--ink);
   font-size: 16px;
   position: relative;
-  /* `clip` rather than `hidden`: hidden on an ancestor would break `position: sticky`
-     on the header, which is the one thing on the page that must keep working. */
+  /*
+   * `clip` rather than `hidden`: `hidden` on an ancestor silently breaks `position: sticky`
+   * on the header, which is the one thing on this page that must never stop working.
+   * This is also the guard that keeps a wide decorative element from ever producing a
+   * sideways scroll on a phone.
+   */
   overflow-x: clip;
 }
 
-/* Paper grain. An inline SVG turbulence rather than an image request. */
+/* Grain, so the large flat dark areas read as a surface rather than as #000 nothing. */
 .atelier-page::before {
   content: '';
   position: fixed;
   inset: 0;
   z-index: 60;
   pointer-events: none;
-  opacity: 0.32;
-  mix-blend-mode: multiply;
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='240' height='240'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='4' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='240' height='240' filter='url(%23n)' opacity='0.55'/%3E%3C/svg%3E");
+  opacity: 0.055;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='240' height='240'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='240' height='240' filter='url(%23n)'/%3E%3C/svg%3E");
 }
 
 /* ------------------------------------------------------------------ typography */
@@ -77,10 +80,10 @@
 /**
  * Headings deliberately do NOT set a colour.
  *
- * `.atelier h2` would be one specificity step above a Tailwind `text-[…]` utility, so a
- * heading on one of the ink-coloured sections silently kept the dark ink colour and
- * rendered black-on-black. Colour is inherited from `.atelier` (or set per element with a
- * utility, which now actually wins).
+ * `.atelier h2` outranks a Tailwind `text-[…]` utility, so a heading that needed to be a
+ * different colour silently kept this one — which is how two headings ended up rendering
+ * black-on-black. Colour inherits from `.atelier`, or is set per element with a utility
+ * that now actually wins.
  */
 .atelier h1,
 .atelier h2,
@@ -89,7 +92,7 @@
   font-family: var(--display);
   font-weight: 300;
   letter-spacing: -0.015em;
-  line-height: 1.02;
+  line-height: 1.04;
 }
 
 /* Tailwind's `font-[...]` arbitrary value is ambiguous between family, size and weight,
@@ -98,11 +101,7 @@
   font-family: var(--sans);
 }
 
-/**
- * The small letter-spaced label above every section title. Colour is set at each usage
- * for the same specificity reason as the headings above — on the ink sections it is gold,
- * on the paper sections madder.
- */
+/* The letter-spaced label above each section title. Colour is set at each usage. */
 .atelier .eyebrow {
   font-family: var(--sans);
   font-size: 0.6875rem;
@@ -112,57 +111,99 @@
 }
 
 .atelier .lede {
-  font-size: clamp(1.0625rem, 0.95rem + 0.5vw, 1.25rem);
-  line-height: 1.72;
-  color: var(--ink-soft);
+  font-size: clamp(1rem, 0.94rem + 0.3vw, 1.1875rem);
+  line-height: 1.75;
+  color: var(--cream-dim);
   font-weight: 300;
 }
 
-/* Italic serif for the one word per headline that carries the emphasis. */
+/* The one word per headline that carries the emphasis. */
 .atelier .accent-word {
   font-style: italic;
-  color: var(--madder);
+  background: linear-gradient(96deg, var(--gold-deep), var(--gold-pale) 45%, var(--gold) 75%, var(--gold-highlight));
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+/* Foil for numerals and rules. Same ramp as the logo's bevel. */
+.atelier .foil {
+  background: linear-gradient(100deg, #a87824 0%, #f0d890 26%, #b48430 48%, #fcf0b4 72%, #c0903c 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
 }
 
 /* ---------------------------------------------------------------- ornamentation */
 
-/* Gold hairline with a stitch cadence — the motif that ties the page together. */
+/* Gold hairline with a stitch cadence. */
 .atelier .stitch-rule {
   height: 1px;
   width: 100%;
   background-image: linear-gradient(to right, var(--gold) 0 8px, transparent 8px 16px);
   background-size: 16px 1px;
-  opacity: 0.6;
+  opacity: 0.55;
 }
 
 .atelier .stitch-rule-v {
   width: 1px;
   background-image: linear-gradient(to bottom, var(--gold) 0 8px, transparent 8px 16px);
   background-size: 1px 16px;
-  opacity: 0.55;
+  opacity: 0.5;
 }
 
-/* Woven ground for the darker panels — a fabric twill at very low contrast. */
+/* A hairline that fades out at both ends — used to cap sections. */
+.atelier .rule-fade {
+  height: 1px;
+  background: linear-gradient(to right, transparent, var(--gold-deep), var(--gold-light), var(--gold-deep), transparent);
+  opacity: 0.5;
+}
+
+/* Woven ground for panels — a twill at very low contrast. */
 .atelier .weave {
   background-image:
-    repeating-linear-gradient(45deg, rgba(216, 188, 114, 0.05) 0 1px, transparent 1px 5px),
-    repeating-linear-gradient(-45deg, rgba(216, 188, 114, 0.04) 0 1px, transparent 1px 5px);
+    repeating-linear-gradient(45deg, rgba(216, 180, 96, 0.045) 0 1px, transparent 1px 6px),
+    repeating-linear-gradient(-45deg, rgba(216, 180, 96, 0.035) 0 1px, transparent 1px 6px);
 }
 
-/* Foil gradient for the gold rules and numerals. */
-.atelier .foil {
-  background: linear-gradient(100deg, #9a7830 0%, #d9bc72 28%, #8c6c2c 52%, #e2cb92 74%, #a07f34 100%);
-  -webkit-background-clip: text;
-  background-clip: text;
-  color: transparent;
+/**
+ * The scrim that goes over every photograph.
+ *
+ * The images come from a dozen different photographers under a dozen different lights.
+ * A consistent warm darkening pass is what makes them read as one set instead of a
+ * moodboard, and it is what keeps gold text legible on top of them.
+ */
+.atelier .photo-scrim::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background:
+    linear-gradient(to top, rgba(16, 11, 7, 0.92) 0%, rgba(16, 11, 7, 0.35) 45%, rgba(16, 11, 7, 0.15) 100%),
+    linear-gradient(to right, rgba(16, 11, 7, 0.55), transparent 60%);
+}
+
+.atelier .photo-scrim-soft::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: linear-gradient(to top, rgba(16, 11, 7, 0.8), rgba(16, 11, 7, 0.08) 55%);
+}
+
+/* Images are always cropped by their frame, never stretched. */
+.atelier .photo {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
 }
 
 /* --------------------------------------------------------------------- motion */
 
-/* Scroll reveal. The class is added by an IntersectionObserver in Reveal.tsx. */
 .atelier .reveal {
   opacity: 0;
-  transform: translateY(1.75rem);
+  transform: translateY(1.5rem);
   transition:
     opacity 0.9s cubic-bezier(0.16, 1, 0.3, 1),
     transform 0.9s cubic-bezier(0.16, 1, 0.3, 1);
@@ -172,36 +213,6 @@
 .atelier .reveal.is-visible {
   opacity: 1;
   transform: none;
-}
-
-/* Line-art that draws itself, like a stitch being run. */
-@keyframes atelier-draw {
-  to {
-    stroke-dashoffset: 0;
-  }
-}
-
-.atelier .draw path,
-.atelier .draw line,
-.atelier .draw circle,
-.atelier .draw ellipse {
-  stroke-dasharray: var(--len, 1200);
-  stroke-dashoffset: var(--len, 1200);
-  animation: atelier-draw 2.6s cubic-bezier(0.65, 0, 0.35, 1) forwards;
-}
-
-@keyframes atelier-marquee {
-  from {
-    transform: translateX(0);
-  }
-  to {
-    /* Half, because the track holds the same content twice. */
-    transform: translateX(-50%);
-  }
-}
-
-.atelier .marquee-track {
-  animation: atelier-marquee 42s linear infinite;
 }
 
 @keyframes atelier-rise {
@@ -220,24 +231,176 @@
   animation: atelier-rise 1s cubic-bezier(0.16, 1, 0.3, 1) forwards;
 }
 
-/* A slow drift for the decorative thread loops behind the hero. */
-@keyframes atelier-drift {
-  0%,
-  100% {
-    transform: translate3d(0, 0, 0) rotate(0deg);
+/* A very slow pan on the hero photograph — enough to feel alive, not enough to notice. */
+@keyframes atelier-kenburns {
+  from {
+    transform: scale(1) translate3d(0, 0, 0);
   }
-  50% {
-    transform: translate3d(0, -1.25rem, 0) rotate(1.5deg);
+  to {
+    transform: scale(1.08) translate3d(0, -1.2%, 0);
   }
 }
 
-.atelier .drift {
-  animation: atelier-drift 14s ease-in-out infinite;
+.atelier .kenburns {
+  animation: atelier-kenburns 24s ease-out forwards;
+}
+
+@keyframes atelier-marquee {
+  from {
+    transform: translateX(0);
+  }
+  to {
+    /* Half, because the track holds the same content twice. */
+    transform: translateX(-50%);
+  }
+}
+
+.atelier .marquee-track {
+  animation: atelier-marquee 46s linear infinite;
+}
+
+/* A gold sheen that travels across the logo once on load, like light on metal. */
+@keyframes atelier-sheen {
+  from {
+    transform: translateX(-120%) skewX(-18deg);
+  }
+  to {
+    transform: translateX(320%) skewX(-18deg);
+  }
+}
+
+.atelier .sheen::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 38%;
+  background: linear-gradient(90deg, transparent, rgba(252, 240, 180, 0.5), transparent);
+  animation: atelier-sheen 2.6s cubic-bezier(0.4, 0, 0.2, 1) 0.7s both;
+  pointer-events: none;
+}
+
+/* ------------------------------------------------------------------ the intro */
+
+@keyframes intro-mark-in {
+  from {
+    opacity: 0;
+    transform: translateY(1.5rem) scale(0.94);
+    filter: blur(6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+    filter: blur(0);
+  }
+}
+
+@keyframes intro-word-in {
+  from {
+    opacity: 0;
+    /* Revealed left-to-right, the way the script was written. */
+    clip-path: inset(0 100% 0 0);
+    transform: translateY(0.5rem);
+  }
+  to {
+    opacity: 1;
+    clip-path: inset(0 0 0 0);
+    transform: none;
+  }
+}
+
+@keyframes intro-rule-in {
+  from {
+    opacity: 0;
+    transform: scaleX(0);
+  }
+  to {
+    opacity: 1;
+    transform: scaleX(1);
+  }
+}
+
+.atelier .intro-mark {
+  animation: intro-mark-in 1.1s cubic-bezier(0.16, 1, 0.3, 1) 0.05s both;
+}
+
+.atelier .intro-word {
+  animation: intro-word-in 1.1s cubic-bezier(0.16, 1, 0.3, 1) 0.45s both;
+}
+
+.atelier .intro-rule {
+  animation: intro-rule-in 0.9s cubic-bezier(0.16, 1, 0.3, 1) 0.9s both;
+}
+
+.atelier .intro-caption {
+  animation: atelier-rise 0.8s cubic-bezier(0.16, 1, 0.3, 1) 1.15s both;
+}
+
+/* ------------------------------------------------------------ scroll progress */
+
+/**
+ * The reading indicator. Driven by a CSS custom property that one rAF-throttled listener
+ * updates, so scrolling never triggers a React render just to move a 2px bar.
+ */
+.atelier .scroll-progress {
+  transform: scaleX(var(--progress, 0));
+  transform-origin: left;
+  will-change: transform;
+}
+
+/* ------------------------------------------------------------------- parallax */
+
+/**
+ * Set from JS as an element crosses the viewport. Kept as a transform so it stays on the
+ * compositor and never causes layout.
+ *
+ * The scale is part of THIS rule rather than a Tailwind `scale-*` utility: both would set
+ * `transform`, this selector wins on specificity, and the utility would be silently
+ * dropped — leaving the image to slide and expose the frame's edge. The 12% overscan is the
+ * headroom the drift moves within.
+ */
+.atelier .parallax {
+  transform: translate3d(0, var(--shift, 0px), 0) scale(1.12);
+  will-change: transform;
 }
 
 /* --------------------------------------------------------------- interactions */
 
-/* Underline that runs in from the left, like a tacking stitch. */
+/**
+ * A bar of light that crosses a button on hover.
+ *
+ * `overflow: hidden` on the button plus a skewed highlight — cheap, entirely on the
+ * compositor, and it makes the gold read as metal rather than as a flat fill.
+ */
+.atelier .shine {
+  position: relative;
+  overflow: hidden;
+}
+
+.atelier .shine::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 45%;
+  transform: translateX(-160%) skewX(-20deg);
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.35), transparent);
+  transition: transform 0.75s cubic-bezier(0.16, 1, 0.3, 1);
+  pointer-events: none;
+}
+
+.atelier .shine:hover::before,
+.atelier .shine:focus-visible::before {
+  transform: translateX(260%) skewX(-20deg);
+}
+
+/* Content above the sweep. */
+.atelier .shine > * {
+  position: relative;
+  z-index: 1;
+}
+
 .atelier .link-stitch {
   position: relative;
 }
@@ -246,13 +409,13 @@
   content: '';
   position: absolute;
   left: 0;
-  bottom: -0.3rem;
+  bottom: -0.35rem;
   height: 1px;
   width: 100%;
   transform: scaleX(0);
   transform-origin: left;
   transition: transform 0.45s cubic-bezier(0.16, 1, 0.3, 1);
-  background-image: linear-gradient(to right, var(--madder) 0 5px, transparent 5px 10px);
+  background-image: linear-gradient(to right, var(--gold-light) 0 5px, transparent 5px 10px);
   background-size: 10px 1px;
 }
 
@@ -262,28 +425,44 @@
   transform: scaleX(1);
 }
 
-/* Cards lift a hair and their gold rule brightens. */
 .atelier .card-lift {
   transition:
-    transform 0.5s cubic-bezier(0.16, 1, 0.3, 1),
-    box-shadow 0.5s cubic-bezier(0.16, 1, 0.3, 1),
-    border-color 0.5s ease;
+    transform 0.55s cubic-bezier(0.16, 1, 0.3, 1),
+    border-color 0.55s ease;
 }
 
 .atelier .card-lift:hover {
-  transform: translateY(-0.375rem);
-  border-color: rgba(176, 141, 63, 0.55);
-  box-shadow: 0 1.5rem 3rem -1.5rem rgba(23, 19, 15, 0.28);
+  transform: translateY(-0.4rem);
+  border-color: var(--ink-line-strong);
 }
 
 .atelier a:focus-visible,
-.atelier button:focus-visible {
-  outline: 2px solid var(--madder);
+.atelier button:focus-visible,
+.atelier input:focus-visible,
+.atelier select:focus-visible,
+.atelier textarea:focus-visible {
+  outline: 2px solid var(--gold-light);
   outline-offset: 3px;
   border-radius: 2px;
 }
 
-/* Nothing on a brochure is worth making someone motion-sick over. */
+/* Form controls inherit the dark ground rather than the browser's white. */
+.atelier input,
+.atelier select,
+.atelier textarea {
+  color: var(--cream);
+}
+
+.atelier select option {
+  background-color: var(--ink-panel);
+  color: var(--cream);
+}
+
+/* Long words (an email address, a URL) must wrap rather than push the page sideways. */
+.atelier .wrap-anywhere {
+  overflow-wrap: anywhere;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .atelier *,
   .atelier *::before,
@@ -298,10 +477,25 @@
     transform: none;
   }
 
-  .atelier .draw path,
-  .atelier .draw line,
-  .atelier .draw circle,
-  .atelier .draw ellipse {
-    stroke-dashoffset: 0;
+  .atelier .kenburns {
+    animation: none;
+  }
+
+  /* The intro is skipped entirely in SiteLoader, but if it ever renders it must not move. */
+  .atelier .intro-mark,
+  .atelier .intro-word,
+  .atelier .intro-rule,
+  .atelier .intro-caption {
+    animation: none;
+    opacity: 1;
+    transform: none;
+    clip-path: none;
+    filter: none;
+  }
+
+  /* Parallax is movement for its own sake — the one effect to drop first. The overscan
+     stays, otherwise the images would visibly resize when the setting is toggled. */
+  .atelier .parallax {
+    transform: scale(1.12);
   }
 }

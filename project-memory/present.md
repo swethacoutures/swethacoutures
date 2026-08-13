@@ -1,7 +1,77 @@
 # PRESENT — Current State of the System
 
 > Snapshot of how the app is built and what exists RIGHT NOW.
-> Last verified: 2026-08-13.
+> Last verified: 2026-08-14.
+
+## 0aaa. 2026-08-14 — the site is built around the real logo, and booking is live
+
+- **The palette comes out of `public/logo.png`.** The gold ramp in `landing.css`
+  (`#a87824` → `#fcf0b4`) is sampled from the file, and the espresso ground is derived from
+  the dark outline the gold is drawn against. The site is **dark** for that reason: the logo
+  is gold line-art on transparency, and on pale paper it goes flat and muddy.
+- **🔴 The logo is drawn from THREE files, and that is not an accident.**
+  `logo-lockup.png`, `logo-mark.png` and `logo-wordmark.png`, all trimmed to their own
+  artwork. In the supplied lockup the dress-form is the full 692px of height while the
+  script is only ~166px, so sizing the lockup to fit a 48px header renders the shop's name
+  at ~19px — an illegible gold smudge, which is exactly what the client reported. The `bar`
+  variant in `Logo.tsx` draws the mark and the script as two images with **independent
+  heights** (script at 0.62× the mark) so the name stays readable. Do not "simplify" this
+  back to one image.
+- **`Logo.tsx` owns alignment everywhere.** `display:block` (an inline `<img>` sits on the
+  text baseline and leaves a ~4px phantom gap — the usual cause of a logo looking a few
+  pixels high in a flex row), explicit width+height from the measured ratio, and sizing by
+  height so every placement matches. Favicons and the apple-touch icon are generated from
+  the mark.
+- **Photography is real and self-hosted.** 15 Unsplash images processed into
+  `public/images/*.webp` (~2 MB total, cropped to the ratios the layout uses). Served from
+  our own origin so the site cannot break when a CDN URL changes, and no third-party request
+  appears on a customer's page load.
+- **Hero is a four-frame cross-fading carousel** (`HeroCarousel.tsx`). Only frame 1 is
+  eager; the rest are fetched one ahead. It stops on `visibilitychange`, shows a single
+  still image under reduced motion, and **restarts its timer whenever the frame changes** —
+  without that, tapping a control showed your chosen frame for a fraction of a second before
+  the next tick replaced it.
+- **`SiteLoader.tsx`** is the opening curtain: the mark drops in, the name is written in
+  left-to-right behind a sweep of light, then two halves part like drawn fabric. It lifts on
+  whichever comes first — the hero image loading or a 2.6s hard limit — plays **once per
+  session**, and is skipped entirely under reduced motion. It releases `body.overflow` in
+  the same effect that removes it, including on unmount.
+- **`useScrollEffects.ts`** drives the reading-progress bar and the image parallax from one
+  rAF-throttled listener writing CSS custom properties. No React state: re-rendering the
+  page on every scroll frame is what makes a site feel heavy.
+  ⚠️ The parallax `scale(1.12)` overscan lives in the `.parallax` CSS rule, **not** in a
+  Tailwind `scale-*` utility — both set `transform`, the class wins on specificity, and the
+  utility would be silently dropped, letting the image slide and expose the frame's edge.
+- **🔴 Book Appointment writes a real appointment.** `POST /api/appointments` →
+  `api/_appointmentIntake.ts` (import-free and self-contained, same pattern as
+  `_deviceIngest.ts`) → the `appointments` collection the admin page already reads, with
+  `status: 'scheduled'` and `source: 'website'`. It runs **server-side on purpose**: the
+  alternative is a Firestore rule allowing unauthenticated creates, which cannot be taken
+  back once found. Doc id is `web_<phone>_<day>`, so a double-tapped submit updates one
+  request instead of creating twins. Honeypot field, 120-day horizon, validation on every
+  field. Dev server serves the same handler via `appointmentsDevApi` in `vite.config.ts`.
+  If the POST fails the customer gets the same details pre-written for WhatsApp — a broken
+  function must not cost the shop a customer.
+  ⚠️ `vercel.json` now carries an explicit `/api/:path*` passthrough above the SPA
+  catch-all.
+- **Booking dialog is built from the Radix primitives**, not the shared `<DialogContent>` —
+  that wrapper renders its own close button, which sat on top of this dialog's own (the
+  client saw two X buttons). Choosing "Something else" reveals a required free-text field,
+  and that text is what gets stored.
+- **Admin:** the bill sub-item row uses an explicit `lg:grid-cols-[…]` template so the
+  "Sold from store" toggle shares the row instead of adding a second line per sub-item;
+  Payments to Collect can now **Record** a payment (it loads the full bill first — passing
+  the panel's stripped projection to `BillPaymentDialog` would have replaced the bill's
+  whole `paymentRecords` history with one synthetic entry); Pending Bills is collapsible and
+  **starts collapsed**; `AttendanceTodayPanel` fills the freed slot with present / on the
+  floor / checked out / absent and the day's wages, and shows no absentees on a weekly off
+  day.
+- **Fixed in passing:** the Appointments search box advertised "customer, phone or purpose"
+  but never searched the phone — the one search a shop makes constantly. It now matches
+  digits with punctuation stripped from both sides, plus notes.
+- **Verified in a browser:** zero horizontal overflow at 320/360/390/414/768/1024/1280/1440/
+  1920, the booking round trip from the public form to the admin Appointments page, the
+  loader clearing itself, and the carousel controls. Test data was removed afterwards.
 
 ## 0aa. 2026-08-13 — the app has a public website, and /admin is the staff door
 

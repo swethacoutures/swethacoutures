@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { Receipt, Loader2, ArrowRight, CheckCircle2 } from 'lucide-react';
+import { Receipt, Loader2, ArrowRight, CheckCircle2, ChevronDown } from 'lucide-react';
 import { fetchCollectionCached, invalidateCollection } from '@/utils/firestoreCache';
 import { useNavigate } from 'react-router-dom';
 import { Bill, formatBillDate, formatCurrency, formatDateForDisplay } from '@/utils/billingUtils';
@@ -10,19 +10,30 @@ import BillPaymentDialog from '@/components/BillPaymentDialog';
 
 interface PendingBillsPanelProps {
   limit?: number;
+  /**
+   * Start folded away. The dashboard passes this: the panel duplicates what Payments to
+   * Collect already shows (that panel groups the same debt by customer, which is how the
+   * shop chases it — one call, not one call per bill), so it earns its place as a detail
+   * view you open when you want it, not as half the screen every time.
+   */
+  defaultCollapsed?: boolean;
 }
 
 /**
  * Bills still carrying a balance, oldest first, with the payment dialog one click away —
  * so recording a collection never requires leaving the dashboard.
  */
-const PendingBillsPanel: React.FC<PendingBillsPanelProps> = ({ limit = 6 }) => {
+const PendingBillsPanel: React.FC<PendingBillsPanelProps> = ({
+  limit = 6,
+  defaultCollapsed = false,
+}) => {
   const navigate = useNavigate();
   const [bills, setBills] = useState<Bill[]>([]);
   const [loading, setLoading] = useState(true);
   const [showAll, setShowAll] = useState(false);
   const [payBill, setPayBill] = useState<Bill | null>(null);
   const [reloadKey, setReloadKey] = useState(0);
+  const [open, setOpen] = useState(!defaultCollapsed);
 
   useEffect(() => {
     let cancelled = false;
@@ -59,15 +70,33 @@ const PendingBillsPanel: React.FC<PendingBillsPanelProps> = ({ limit = 6 }) => {
   return (
     <>
       <Card className="border-0 shadow-lg">
+        {/*
+          The whole header is the toggle. A collapsed panel still has to report the one
+          number that decides whether it is worth opening, so the total and the bill count
+          stay visible either way.
+        */}
         <CardHeader className="pb-3">
-          <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+          <button
+            type="button"
+            onClick={() => setOpen((isOpen) => !isOpen)}
+            aria-expanded={open}
+            aria-controls="pending-bills-body"
+            className="flex w-full flex-col gap-2 text-left sm:flex-row sm:items-start sm:justify-between"
+          >
             <div className="min-w-0">
               <CardTitle className="flex items-center gap-2 text-base sm:text-lg">
                 <Receipt className="h-5 w-5 shrink-0 text-purple-600" />
                 Pending Bills
+                <ChevronDown
+                  className={`h-4 w-4 shrink-0 text-gray-400 transition-transform duration-300 ${
+                    open ? 'rotate-180' : ''
+                  }`}
+                />
               </CardTitle>
               <CardDescription className="mt-1">
-                Unpaid &amp; part-paid bills — record a payment without leaving this page
+                {open
+                  ? 'Unpaid & part-paid bills — record a payment without leaving this page'
+                  : 'Bill-by-bill view. Tap to open.'}
               </CardDescription>
             </div>
             <div className="text-left sm:text-right">
@@ -78,9 +107,9 @@ const PendingBillsPanel: React.FC<PendingBillsPanelProps> = ({ limit = 6 }) => {
                 {bills.length} bill{bills.length === 1 ? '' : 's'}
               </p>
             </div>
-          </div>
+          </button>
         </CardHeader>
-        <CardContent>
+        <CardContent id="pending-bills-body" hidden={!open}>
           {loading ? (
             <div className="flex items-center justify-center gap-2 py-10 text-gray-500">
               <Loader2 className="h-4 w-4 animate-spin" /> Loading bills…

@@ -701,7 +701,15 @@ const ProductDescriptionManager: React.FC<ProductDescriptionManagerProps> = ({
                   ) : (
                     product.descriptions.map((desc, descIndex) => (
                       <div key={desc.id} className="border border-gray-200 rounded-lg p-3 bg-gray-50 dark:bg-gray-800/50">
-                        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-12 gap-3 items-end">
+                        {/*
+                          An explicit column template on `lg` rather than a 12-column grid.
+                          The store-sale toggle used to sit in a block underneath, which cost
+                          a whole extra row of height per sub-item on desktop; a 12-column
+                          grid had no room left to bring it up. Fixed widths for the numeric
+                          fields and `minmax(0,1fr)` for the description mean the row fits on
+                          one line and the description absorbs whatever is left over.
+                        */}
+                        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-[1.75rem_minmax(0,1fr)_5.5rem_6.5rem_7rem_auto_2.75rem] gap-3 items-end">
                           {/* Sub-Item Serial Number */}
                           <div className="sm:col-span-1 lg:col-span-1 flex items-center justify-center">
                             <div className="w-6 h-6 bg-gray-50 dark:bg-gray-800/500 text-white rounded-full flex items-center justify-center text-xs font-medium">
@@ -710,7 +718,7 @@ const ProductDescriptionManager: React.FC<ProductDescriptionManagerProps> = ({
                           </div>
 
                           {/* Description */}
-                          <div className="sm:col-span-2 lg:col-span-4">
+                          <div className="sm:col-span-2 lg:col-span-1 min-w-0">
                             <Label className="text-sm font-medium text-gray-700 dark:text-gray-300">Sub-Item Description *</Label>
                             <SubItemDescriptionInput
                               value={desc.description}
@@ -723,7 +731,7 @@ const ProductDescriptionManager: React.FC<ProductDescriptionManagerProps> = ({
                           </div>
 
                           {/* Quantity */}
-                          <div className="sm:col-span-1 lg:col-span-2">
+                          <div className="sm:col-span-1 lg:col-span-1">
                             <Label className="text-sm font-medium text-gray-700 dark:text-gray-300">Qty *</Label>
                             <NumberInput
                               value={desc.qty}
@@ -747,7 +755,7 @@ const ProductDescriptionManager: React.FC<ProductDescriptionManagerProps> = ({
                           </div>
 
                           {/* Rate */}
-                          <div className="sm:col-span-1 lg:col-span-2">
+                          <div className="sm:col-span-1 lg:col-span-1">
                             <Label className="text-sm font-medium text-gray-700 dark:text-gray-300">Rate (₹) *</Label>
                             <NumberInput
                               value={desc.rate === 0 ? '' : desc.rate}
@@ -764,7 +772,7 @@ const ProductDescriptionManager: React.FC<ProductDescriptionManagerProps> = ({
                           </div>
 
                           {/* Amount */}
-                          <div className="sm:col-span-1 lg:col-span-2">
+                          <div className="sm:col-span-1 lg:col-span-1">
                             <Label className="text-sm font-medium text-gray-700 dark:text-gray-300">Amount (₹)</Label>
                             <div className="mt-1 p-2 bg-white border border-gray-200 rounded-md">
                               <span className="font-semibold text-green-700">
@@ -773,8 +781,36 @@ const ProductDescriptionManager: React.FC<ProductDescriptionManagerProps> = ({
                             </div>
                           </div>
 
+                          {/* Per-item store-sale flag — always available, so an item can
+                              be unticked even when the whole product was marked as a sale.
+                              It lives inside the grid so it shares the row on desktop
+                              instead of adding a second line to every sub-item. */}
+                          <label
+                            className={`flex w-fit cursor-pointer items-center gap-2 whitespace-nowrap rounded-md border px-2.5 py-1.5 text-xs font-medium sm:col-span-2 lg:col-span-1 lg:mb-0.5 ${
+                              desc.isSale
+                                ? 'border-amber-300 bg-amber-50 text-amber-800 dark:border-amber-700 dark:bg-amber-950/40 dark:text-amber-300'
+                                : 'border-gray-200 bg-white text-gray-600 hover:bg-amber-50 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-400'
+                            }`}
+                          >
+                            <Checkbox
+                              checked={!!desc.isSale}
+                              onCheckedChange={(checked) =>
+                                updateDescription(
+                                  product.id,
+                                  desc.id,
+                                  'isSale' as keyof ProductDescription,
+                                  checked === true
+                                )
+                              }
+                            />
+                            <ShoppingBag className="h-3.5 w-3.5 shrink-0" />
+                            {/* Full wording where there is room; the icon plus a short
+                                label carries it on narrower desktops. */}
+                            <span className="hidden xl:inline">Sold from store</span>
+                            <span className="xl:hidden">Store sale</span>
+                          </label>
                           {/* Delete button */}
-                          <div className="sm:col-span-1 lg:col-span-1">
+                          <div className="sm:col-span-1 lg:col-span-1 lg:justify-self-end">
                             <Button
                               type="button"
                               variant="outline"
@@ -786,30 +822,6 @@ const ProductDescriptionManager: React.FC<ProductDescriptionManagerProps> = ({
                             </Button>
                           </div>
                         </div>
-
-                        {/* Per-item store-sale flag — always available, so an item can be
-                            unticked even when the whole product was marked as a sale. */}
-                        <label
-                          className={`mt-3 flex w-fit cursor-pointer items-center gap-2 rounded-md border px-2.5 py-1 text-xs font-medium ${
-                            desc.isSale
-                              ? 'border-amber-300 bg-amber-50 text-amber-800 dark:border-amber-700 dark:bg-amber-950/40 dark:text-amber-300'
-                              : 'border-gray-200 bg-white text-gray-600 hover:bg-amber-50 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-400'
-                          }`}
-                        >
-                          <Checkbox
-                            checked={!!desc.isSale}
-                            onCheckedChange={(checked) =>
-                              updateDescription(
-                                product.id,
-                                desc.id,
-                                'isSale' as keyof ProductDescription,
-                                checked === true
-                              )
-                            }
-                          />
-                          <ShoppingBag className="h-3.5 w-3.5" />
-                          Sold from store
-                        </label>
                       </div>
                     ))
                   )}

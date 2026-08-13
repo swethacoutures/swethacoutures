@@ -5,8 +5,8 @@ import { Link, Navigate } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { Scissors, Crown, ArrowLeft, Eye, EyeOff, ShieldCheck } from 'lucide-react';
+import { Card, CardContent, CardDescription, CardHeader } from '@/components/ui/card';
+import { ArrowLeft, Eye, EyeOff, ShieldCheck } from 'lucide-react';
 
 /**
  * Staff sign-in, reachable at /admin (and /login, kept as an alias).
@@ -44,19 +44,40 @@ const Login = () => {
   };
 
   return (
-    <div className="relative flex min-h-screen items-center justify-center bg-gradient-to-br from-purple-900 via-blue-900 to-indigo-900 p-4">
-      <div className="absolute inset-0 bg-black/20" />
+    <div className="relative flex min-h-screen items-center justify-center bg-[#100b07] p-4">
+      {/* The shop's silk, held right back so the card stays the subject. */}
+      <img
+        src="/images/texture-gold-silk.webp"
+        alt=""
+        aria-hidden="true"
+        className="absolute inset-0 h-full w-full object-cover opacity-20"
+      />
+      <div className="absolute inset-0 bg-gradient-to-b from-[#100b07]/70 via-[#100b07]/85 to-[#100b07]" />
 
       <div className="relative z-10 w-full max-w-md space-y-4">
         <Card className="border-0 bg-white shadow-2xl backdrop-blur-sm dark:bg-gray-900/95">
           <CardHeader className="space-y-4 text-center">
-            <div className="flex items-center justify-center space-x-3">
-              <Crown className="h-8 w-8 text-purple-600" />
-              <Scissors className="h-8 w-8 text-blue-600" />
-            </div>
-            <CardTitle className="bg-gradient-to-r from-purple-600 to-blue-600 bg-clip-text text-3xl font-bold text-transparent">
-              {businessSettings?.businessName || 'Business Management'}
-            </CardTitle>
+            {/* The shop's own logo rather than stock icons. The mark and the script are
+                separate files so the name can be scaled up relative to the emblem — in the
+                supplied lockup the script is only a fifth of the artwork's height and goes
+                unreadable at this size. Explicit widths so the card cannot shift on load. */}
+            <span className="mx-auto flex items-center justify-center gap-3">
+              <img
+                src="/images/logo-mark.png"
+                alt=""
+                aria-hidden="true"
+                width={30}
+                height={60}
+                className="block h-[60px] w-[30px] object-contain"
+              />
+              <img
+                src="/images/logo-wordmark.png"
+                alt={businessSettings?.businessName || "Swetha's Couture"}
+                width={222}
+                height={40}
+                className="block h-[40px] w-[222px] object-contain"
+              />
+            </span>
             <CardDescription className="text-gray-600 dark:text-gray-400">
               Staff sign-in — authorised users only
             </CardDescription>
@@ -74,7 +95,7 @@ const Login = () => {
                   placeholder="Enter your email"
                   required
                   autoComplete="username"
-                  className="transition-all duration-200 focus:ring-2 focus:ring-purple-500"
+                  className="transition-all duration-200 focus:ring-2 focus:ring-[#c0903c]"
                 />
               </div>
 
@@ -89,7 +110,7 @@ const Login = () => {
                     placeholder="Enter your password"
                     required
                     autoComplete="current-password"
-                    className="pr-10 transition-all duration-200 focus:ring-2 focus:ring-purple-500"
+                    className="pr-10 transition-all duration-200 focus:ring-2 focus:ring-[#c0903c]"
                   />
                   <button
                     type="button"
@@ -104,7 +125,7 @@ const Login = () => {
 
               <Button
                 type="submit"
-                className="w-full bg-gradient-to-r from-purple-600 to-blue-600 transition-all duration-300 hover:from-purple-700 hover:to-blue-700"
+                className="w-full bg-[#c0903c] text-[#100b07] transition-all duration-300 hover:bg-[#d8b460]"
                 disabled={loading}
               >
                 {loading ? 'Signing In...' : 'Sign In'}
@@ -124,7 +145,7 @@ const Login = () => {
 
         <Link
           to="/"
-          className="flex items-center justify-center gap-2 text-sm text-white/70 transition-colors hover:text-white"
+          className="flex items-center justify-center gap-2 text-sm text-[#f6efe3]/60 transition-colors hover:text-[#d8b460]"
         >
           <ArrowLeft className="h-4 w-4" />
           Back to swethacoutures.com

@@ -9,8 +9,10 @@ import ProcessSection from '@/components/landing/ProcessSection';
 import VisitSection from '@/components/landing/VisitSection';
 import SiteFooter from '@/components/landing/SiteFooter';
 import BookingDialog from '@/components/landing/BookingDialog';
+import SiteLoader from '@/components/landing/SiteLoader';
+import { useScrollEffects } from '@/components/landing/useScrollEffects';
 import { CONTACT, PRODUCTS, SERVICES } from '@/components/landing/landingContent';
-import { MessageCircle } from 'lucide-react';
+import { CalendarCheck } from 'lucide-react';
 
 /**
  * Structured data for the shop.
@@ -43,6 +45,9 @@ const localBusinessSchema = {
       closes: '19:00',
     },
   ],
+  image: ['/images/hero-couture.webp', '/images/atelier-boutique.webp'],
+  logo: '/images/logo-lockup.png',
+  priceRange: '₹₹',
   makesOffer: SERVICES.map((service) => ({
     '@type': 'Offer',
     itemOffered: { '@type': 'Service', name: service.title, description: service.blurb },
@@ -62,6 +67,7 @@ const localBusinessSchema = {
  */
 const Landing: React.FC = () => {
   const [bookingOpen, setBookingOpen] = useState(false);
+  const progressRef = useScrollEffects();
 
   /**
    * The admin app sets a `dark` class on <html> from the owner's saved preference. A
@@ -112,6 +118,17 @@ const Landing: React.FC = () => {
 
   return (
     <div className="atelier atelier-page min-h-screen">
+      <SiteLoader />
+
+      {/* Reading progress. Fixed above the header, driven by a CSS variable rather than
+          React state so scrolling costs nothing (see useScrollEffects). */}
+      <div className="fixed inset-x-0 top-0 z-[55] h-[2px]" aria-hidden="true">
+        <div
+          ref={progressRef}
+          className="scroll-progress h-full bg-gradient-to-r from-[var(--gold-deep)] via-[var(--gold-pale)] to-[var(--gold)]"
+        />
+      </div>
+
       {/* The only safe way to emit JSON-LD in React. The object is a constant defined
           above — no user input reaches it, so there is nothing here to escape. */}
       <script
@@ -133,14 +150,16 @@ const Landing: React.FC = () => {
       <SiteFooter />
 
       {/* Phone-only quick action. The header CTA is hidden below `sm`, so without this the
-          most important button on the site would be two taps away behind a menu. */}
+          most important button on the site would be two taps away behind a menu. It sits
+          above the safe-area inset so an iPhone's home indicator cannot cover it. */}
       <button
         type="button"
         onClick={open}
-        className="fixed bottom-5 right-5 z-40 flex h-14 w-14 items-center justify-center rounded-full bg-[var(--madder)] text-[var(--paper-warm)] shadow-[0_1rem_2rem_-0.5rem_rgba(122,43,37,0.7)] transition-transform duration-300 hover:scale-105 active:scale-95 sm:hidden"
+        className="shine fixed bottom-4 right-4 z-40 flex h-14 w-14 items-center justify-center rounded-full bg-[var(--gold)] text-[var(--ink)] shadow-[0_1rem_2rem_-0.5rem_rgba(192,144,60,0.65)] transition-transform duration-300 hover:scale-105 active:scale-95 sm:hidden"
+        style={{ bottom: 'max(1rem, env(safe-area-inset-bottom))' }}
         aria-label="Book an appointment"
       >
-        <MessageCircle className="h-5 w-5" />
+        <CalendarCheck className="h-5 w-5" />
       </button>
 
       <BookingDialog open={bookingOpen} onOpenChange={setBookingOpen} />

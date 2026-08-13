@@ -9,12 +9,19 @@ import {
   Loader2,
   ArrowRight,
   Receipt,
+  IndianRupee as RupeeIcon,
 } from 'lucide-react';
 import { fetchCollectionCached } from '@/utils/firestoreCache';
 import { useNavigate } from 'react-router-dom';
 import { formatBillDate, formatCurrency } from '@/utils/billingUtils';
 import { formatBilledDate, formatPendingSince } from '@/utils/customerCalculations';
 import CustomerWhatsAppModal from '@/components/CustomerWhatsAppModal';
+import BillPaymentDialog from '@/components/BillPaymentDialog';
+import type { Bill } from '@/utils/billingUtils';
+import { invalidateCollection } from '@/utils/firestoreCache';
+import { doc, getDoc } from 'firebase/firestore';
+import { db } from '@/lib/firebase';
+import { toast } from '@/hooks/use-toast';
 
 interface PendingBill {
   id: string;
@@ -57,6 +64,50 @@ const PendingPaymentsPanel: React.FC<PendingPaymentsPanelProps> = ({ limit = 6, 
   const [loading, setLoading] = useState(true);
   const [showAll, setShowAll] = useState(false);
   const [waCustomer, setWaCustomer] = useState<any | null>(null);
+  /**
+   * The bill whose payment dialog is open.
+   *
+   * Recording a collection is the whole point of this panel, so it happens here rather than
+   * after a trip to the billing page — the admin is looking at "who owes money" and the
+   * next thing they do is write down what just came in.
+   */
+  const [payBill, setPayBill] = useState<Bill | null>(null);
+  const [openingPayment, setOpeningPayment] = useState('');
+  const [reloadKey, setReloadKey] = useState(0);
+
+  /**
+   * Loads the whole bill before opening the payment dialog.
+   *
+   * The rows in this panel are a stripped projection — id, total, paid, balance. Handing
+   * that to BillPaymentDialog would look fine and quietly destroy data: the dialog rebuilds
+   * `paymentRecords` through buildPaymentUpdate, and a bill whose records were missing from
+   * the object passed in would have its entire payment history replaced by one synthetic
+   * entry. `paymentRecords` is the source of truth for what was collected, so the dialog is
+   * only ever given the real document.
+   */
+  const openPayment = async (billDocId: string) => {
+    setOpeningPayment(billDocId);
+    try {
+      const snapshot = await getDoc(doc(db, 'bills', billDocId));
+      if (!snapshot.exists()) {
+        toast({
+          title: 'Bill not found',
+          description: 'It may have been deleted. Refresh the dashboard.',
+          variant: 'destructive',
+        });
+        return;
+      }
+      setPayBill({ id: snapshot.id, ...snapshot.data() } as Bill);
+    } catch (error) {
+      toast({
+        title: 'Could not open the payment form',
+        description: error instanceof Error ? error.message : 'Unknown error',
+        variant: 'destructive',
+      });
+    } finally {
+      setOpeningPayment('');
+    }
+  };
 
   useEffect(() => {
     let cancelled = false;
@@ -91,7 +142,7 @@ const PendingPaymentsPanel: React.FC<PendingPaymentsPanelProps> = ({ limit = 6, 
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [reloadKey]);
 
   const debtors = useMemo<DebtorRow[]>(() => {
     const map = new Map<string, DebtorRow>();
@@ -240,8 +291,23 @@ const PendingPaymentsPanel: React.FC<PendingPaymentsPanelProps> = ({ limit = 6, 
                     </Button>
                     <Button
                       size="sm"
+                      className="bg-green-600 text-white hover:bg-green-700"
+                      disabled={openingPayment === row.bills[0].id}
+                      onClick={() => openPayment(row.bills[0].id)}
+                      title={`Record a payment against ${row.bills[0].billId}`}
+                    >
+                      {openingPayment === row.bills[0].id ? (
+                        <Loader2 className="h-4 w-4 animate-spin sm:mr-1" />
+                      ) : (
+                        <RupeeIcon className="h-4 w-4 sm:mr-1" />
+                      )}
+                      <span className="hidden sm:inline">Record</span>
+                    </Button>
+                    <Button
+                      size="sm"
                       variant="ghost"
                       onClick={() => navigate(`/billing/${row.bills[0].id}`)}
+                      title="Open the bill"
                     >
                       <Receipt className="h-4 w-4" />
                     </Button>
@@ -269,6 +335,21 @@ const PendingPaymentsPanel: React.FC<PendingPaymentsPanelProps> = ({ limit = 6, 
           customer={waCustomer}
           isOpen={!!waCustomer}
           onClose={() => setWaCustomer(null)}
+        />
+      )}
+
+      {payBill && (
+        <BillPaymentDialog
+          bill={payBill}
+          open={!!payBill}
+          onOpenChange={(open) => !open && setPayBill(null)}
+          onSaved={() => {
+            // The cache is what this panel reads from, so it has to be dropped before the
+            // reload or the list would redraw with the pre-payment balance.
+            invalidateCollection('bills');
+            setPayBill(null);
+            setReloadKey((key) => key + 1);
+          }}
         />
       )}
     </>
