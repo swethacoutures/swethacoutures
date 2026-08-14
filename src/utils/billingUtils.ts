@@ -6,7 +6,13 @@ export interface BillItem {
   quantity: number;
   rate: number; // Selling price per unit
   cost: number; // Cost per unit (from inventory, staff rate, or service cost)
-  amount: number; // Total amount (quantity * rate)
+  amount: number; // Total amount (quantity * rate), negative when this line is a credit
+  /**
+   * A garment taken back in exchange, so the line is a credit rather than a charge.
+   * Mirrors `ProductDescription.isExchange`; carried here because the totals are computed
+   * from items, and a positive `quantity * rate` would otherwise wipe out the sign.
+   */
+  isExchange?: boolean;
   chargeType?: string;
   materialName?: string;
   materialCost?: number;
@@ -27,6 +33,15 @@ export interface ProductDescription {
   barcodeValue?: string;  // barcode value — used to match duplicate scans
   /** Marked as a shop sale (goods sold from the store) — surfaces under ROI → Sales. */
   isSale?: boolean;
+  /**
+   * A garment taken back in exchange, so this line is a credit rather than a charge.
+   *
+   * `amount` is stored **negative** for these, deliberately: every consumer that sums
+   * amounts — totals, reports, ROI — then nets out correctly without needing to know this
+   * flag exists. A positive amount plus a flag would silently overstate revenue anywhere
+   * the flag was not checked. The flag itself only drives wording and styling.
+   */
+  isExchange?: boolean;
 }
 
 export interface Product {
@@ -37,6 +52,8 @@ export interface Product {
   expanded?: boolean; // UI state for collapse/expand
   /** Marked as a shop sale — the whole product counts as goods sold from the store. */
   isSale?: boolean;
+  /** True when every sub-item on this product is an exchange credit. */
+  isExchange?: boolean;
 }
 
 export interface BillBreakdown {
@@ -267,24 +284,39 @@ export const calculateBillTotals = (
   discount: number,
   discountType: 'amount' | 'percentage' = 'amount'
 ) => {
-  // Ensure all items have properly calculated amounts, especially for floating-point quantities
+  /**
+   * Recompute each amount from quantity x rate, for floating-point precision.
+   *
+   * ⚠️ The recompute is why the SIGN has to be restored explicitly. `quantity * rate` is
+   * always positive, so recalculating silently turned an exchange credit back into a
+   * charge — the line and the product total showed a credit while the bill summary showed
+   * the full amount. The sign comes from `isExchange`, falling back to the sign of the
+   * amount that was handed in so a bill loaded from the database keeps its credits.
+   */
   const itemsWithCorrectAmounts = items.map(item => {
-    // Recalculate amount to ensure floating-point precision
     const safeQuantity = typeof item.quantity === 'number' && !isNaN(item.quantity) ? item.quantity : 0;
     const safeRate = typeof item.rate === 'number' && !isNaN(item.rate) ? item.rate : 0;
-    const calculatedAmount = safeQuantity * safeRate;
-    
+    const isCredit = item.isExchange === true || (typeof item.amount === 'number' && item.amount < 0);
+    const calculatedAmount = Math.abs(safeQuantity * safeRate) * (isCredit ? -1 : 1);
+
     return {
       ...item,
       amount: calculatedAmount
     };
   });
 
-  // Filter out items with zero or invalid amounts after recalculation
-  const validItems = itemsWithCorrectAmounts.filter(item => 
-    typeof item.amount === 'number' && 
-    !isNaN(item.amount) && 
-    item.amount > 0
+  /**
+   * Drop only what is meaningless: a zero line, or a non-number.
+   *
+   * This used to require `amount > 0`, which silently discarded every negative line — so an
+   * exchange credit vanished from the bill instead of reducing it. Negative amounts are a
+   * real case now (see `ProductDescription.isExchange`), and the arithmetic below handles
+   * them without any further special-casing.
+   */
+  const validItems = itemsWithCorrectAmounts.filter(item =>
+    typeof item.amount === 'number' &&
+    !isNaN(item.amount) &&
+    item.amount !== 0
   );
 
   // Sanitize breakdown inputs
@@ -311,12 +343,20 @@ export const calculateBillTotals = (
   
   const totalAmount = subtotal + gstAmount - discountAmount;
   
-  // Round to 2 decimal places to handle floating-point precision issues
+  /**
+   * Rounded to 2dp for floating-point noise. The floor at zero is deliberately NOT applied
+   * to the subtotal or the total any more: an exchange worth more than the new garment
+   * leaves the shop owing the customer, and clamping that to ₹0 would hide the fact rather
+   * than represent it. The discount stays floored — a negative discount is always a typo.
+   */
+  // Named to avoid shadowing the module-level `round2` declared further down this file.
+  const to2dp = (value: number) => Math.round(value * 100) / 100;
+
   return {
-    subtotal: Math.max(0, Math.round(subtotal * 100) / 100),
-    gstAmount: Math.max(0, Math.round(gstAmount * 100) / 100),
-    totalAmount: Math.max(0, Math.round(totalAmount * 100) / 100),
-    discountAmount: Math.max(0, Math.round(discountAmount * 100) / 100)
+    subtotal: to2dp(subtotal),
+    gstAmount: to2dp(gstAmount),
+    totalAmount: to2dp(totalAmount),
+    discountAmount: Math.max(0, to2dp(discountAmount))
   };
 };
 
@@ -339,7 +379,13 @@ export const generateQRCodeDataURL = async (upiLink: string): Promise<string> =>
 
 export const formatCurrency = (amount: number | undefined | null): string => {
   const validAmount = amount || 0;
-  return `₹${validAmount.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  // The minus goes before the symbol. `₹-2,200.00` reads like a typo; `-₹2,200.00` reads
+  // as a credit, which is what an exchange line is.
+  const sign = validAmount < 0 ? '-' : '';
+  return `${sign}₹${Math.abs(validAmount).toLocaleString('en-IN', {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  })}`;
 };
 
 export const getBillStatusColor = (status: string): string => {
@@ -588,7 +634,7 @@ const generateItemsTableRows = (bill: Bill): string => {
                 ${product.name}
               </td>
               <td style="padding: 12px 25px; font-size: 14px; color: #374151; line-height: 1.5;">
-                <div style="font-weight: 500;">${desc.description}</div>
+                <div style="font-weight: 500;">${desc.description}${desc.isExchange ? ' <span style="font-weight:600;color:#1d4ed8;">(Exchange)</span>' : ''}</div>
               </td>
               <td style="padding: 12px 15px; text-align: center; font-size: 14px; color: #475569; font-weight: 600;">${desc.qty}</td>
               <td style="padding: 12px 15px; text-align: right; font-size: 14px; color: #475569; font-weight: 600;">${formatCurrency(desc.rate)}</td>
@@ -600,7 +646,7 @@ const generateItemsTableRows = (bill: Bill): string => {
           return `
             <tr style="border-bottom: 1px solid #e2e8f0; background: #fafbfc;">
               <td style="padding: 12px 25px; font-size: 14px; color: #374151; line-height: 1.5;">
-                <div style="font-weight: 500;">${desc.description}</div>
+                <div style="font-weight: 500;">${desc.description}${desc.isExchange ? ' <span style="font-weight:600;color:#1d4ed8;">(Exchange)</span>' : ''}</div>
               </td>
               <td style="padding: 12px 15px; text-align: center; font-size: 14px; color: #475569; font-weight: 600;">${desc.qty}</td>
               <td style="padding: 12px 15px; text-align: right; font-size: 14px; color: #475569; font-weight: 600;">${formatCurrency(desc.rate)}</td>

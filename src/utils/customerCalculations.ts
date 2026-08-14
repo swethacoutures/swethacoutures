@@ -36,6 +36,25 @@ export interface CustomerStats {
  * "396 days" is technically precise and practically useless; the point of this figure is to
  * convey how badly overdue something is, so the two largest meaningful units are enough.
  */
+/**
+ * The same age, compressed to fit a pill: "today", "6d", "3w", "5m", "1y 1m".
+ *
+ * The long form is for prose. Inside a fixed-width badge "pending 1 year 1 month" wraps
+ * onto three lines and tears the rounded pill apart, so anywhere space is tight this is
+ * used instead and the full phrase goes in the `title`.
+ */
+export const formatPendingShort = (days: number): string => {
+  if (days <= 0) return 'today';
+  if (days < 14) return `${days}d`;
+  if (days < 60) return `${Math.floor(days / 7)}w`;
+
+  const years = Math.floor(days / 365);
+  const months = Math.floor((days % 365) / 30);
+
+  if (years > 0) return months > 0 ? `${years}y ${months}m` : `${years}y`;
+  return `${Math.floor(days / 30)}m`;
+};
+
 export const formatPendingSince = (days: number): string => {
   if (days <= 0) return 'today';
   if (days === 1) return '1 day';

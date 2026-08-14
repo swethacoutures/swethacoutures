@@ -3,6 +3,31 @@
 > Snapshot of how the app is built and what exists RIGHT NOW.
 > Last verified: 2026-08-14.
 
+## 0aaaa. 2026-08-14 (later) — exchanges on a bill
+
+- **A bill line can now be an Exchange** — a garment taken back, credited rather than
+  charged. Toggle per sub-item in `ProductDescriptionManager`, beside the store-sale one.
+- **🔴 An exchange line is stored with a NEGATIVE `amount`, not a positive one plus a flag.**
+  Everything that merely sums amounts — bill totals, reports, ROI — then nets out on its
+  own. A positive amount plus a flag would silently overstate revenue everywhere the flag
+  went unchecked, which is the failure you would never notice.
+- **🔴 `calculateBillTotals` recomputes `quantity × rate`, which is always positive.** That
+  discarded the credit's sign, so the line and the product total showed a credit while the
+  bill summary showed the full charge. `BillItem.isExchange` now carries the intent through,
+  and the sign is restored explicitly (falling back to the sign of the incoming amount, so
+  bills loaded from the database keep their credits). Two other guards had to go with it:
+  the `amount > 0` filter (which dropped credit lines entirely) and the `Math.max(0, …)`
+  floor on subtotal/total (which would hide a shop owing the customer money).
+- `formatCurrency` puts the minus **before** the symbol — `-₹2,200.00`, not `₹-2,200.00`.
+  Printed bills label the line "(Exchange)".
+- **"Sold from store" is icon-only now**, on the product and on every sub-item — the phrase
+  was repeated on every line of every product. Wording lives in the tooltip and an
+  `sr-only` label; the amber fill is the state.
+- **The dashboard's pending-age pill was tearing itself apart**: shadcn's `Badge` has no
+  wrap handling, so "pending 1 year 1 month" broke onto three lines inside a rounded pill.
+  `formatPendingShort()` gives "1y 1m" for tight spaces, the badge is `whitespace-nowrap`,
+  and the full phrase is the tooltip.
+
 ## 0aaa. 2026-08-14 — the site is built around the real logo, and booking is live
 
 - **The palette comes out of `public/logo.png`.** The gold ramp in `landing.css`

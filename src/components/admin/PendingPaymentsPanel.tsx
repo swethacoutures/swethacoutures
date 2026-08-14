@@ -14,7 +14,11 @@ import {
 import { fetchCollectionCached } from '@/utils/firestoreCache';
 import { useNavigate } from 'react-router-dom';
 import { formatBillDate, formatCurrency } from '@/utils/billingUtils';
-import { formatBilledDate, formatPendingSince } from '@/utils/customerCalculations';
+import {
+  formatBilledDate,
+  formatPendingShort,
+  formatPendingSince,
+} from '@/utils/customerCalculations';
 import CustomerWhatsAppModal from '@/components/CustomerWhatsAppModal';
 import BillPaymentDialog from '@/components/BillPaymentDialog';
 import type { Bill } from '@/utils/billingUtils';
@@ -236,18 +240,25 @@ const PendingPaymentsPanel: React.FC<PendingPaymentsPanelProps> = ({ limit = 6, 
                 >
                   <div className="min-w-0 flex-1">
                     <div className="flex flex-wrap items-center gap-2">
-                      <span className="font-semibold text-gray-900 dark:text-gray-100">
+                      <span className="min-w-0 truncate font-semibold text-gray-900 dark:text-gray-100">
                         {row.name}
                       </span>
+                      {/*
+                        `whitespace-nowrap` and the short form together. The badge is a
+                        rounded pill with no wrap handling of its own, so a long phrase like
+                        "pending 1 year 1 month" broke onto three lines and tore the pill
+                        apart in a narrow column. The full wording is still one hover away.
+                      */}
                       <Badge
                         variant="outline"
-                        className={
+                        title={`Pending ${formatPendingSince(row.daysPending)}`}
+                        className={`shrink-0 whitespace-nowrap ${
                           row.daysPending >= 30
                             ? 'border-red-300 text-red-700 dark:text-red-300'
                             : 'border-amber-300 text-amber-700 dark:text-amber-300'
-                        }
+                        }`}
                       >
-                        pending {formatPendingSince(row.daysPending)}
+                        {formatPendingShort(row.daysPending)}
                       </Badge>
                     </div>
                     <p className="mt-0.5 text-xs text-gray-500 dark:text-gray-400">
@@ -258,8 +269,8 @@ const PendingPaymentsPanel: React.FC<PendingPaymentsPanelProps> = ({ limit = 6, 
                     </p>
                   </div>
 
-                  <div className="flex items-center justify-between gap-2 sm:justify-end">
-                    <span className="text-lg font-bold text-red-600">
+                  <div className="flex shrink-0 items-center justify-between gap-2 sm:justify-end">
+                    <span className="whitespace-nowrap text-lg font-bold text-red-600">
                       {formatCurrency(row.outstanding)}
                     </span>
                     <Button

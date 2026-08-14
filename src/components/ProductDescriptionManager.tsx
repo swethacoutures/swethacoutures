@@ -5,7 +5,7 @@ import { Input } from '@/components/ui/input';
 import { NumberInput } from '@/components/ui/number-input';
 import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Plus, Trash2, ChevronDown, ChevronRight, Package, AlertTriangle, Scan, Camera, ShoppingBag } from 'lucide-react';
+import { Plus, Trash2, ChevronDown, ChevronRight, Package, AlertTriangle, Scan, Camera, ShoppingBag, ArrowLeftRight } from 'lucide-react';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Product, ProductDescription } from '@/utils/billingUtils';
 import { collection, getDocs, addDoc, deleteDoc, doc } from 'firebase/firestore';
@@ -456,14 +456,22 @@ const ProductDescriptionManager: React.FC<ProductDescriptionManagerProps> = ({
               updatedDesc.qty = qtyValue;
             }
             
-            // Auto-calculate amount only when both qty and rate have valid positive values
-            if (field === 'qty' || field === 'rate') {
+            /*
+             * Recalculate the amount whenever qty, rate or the exchange flag moves.
+             *
+             * An exchange line is stored with a NEGATIVE amount rather than a positive one
+             * plus a flag, so that every consumer that simply sums amounts — the bill total,
+             * reports, ROI — nets it out without knowing the flag exists. Getting this wrong
+             * in the other direction would quietly overstate revenue.
+             */
+            if (field === 'qty' || field === 'rate' || field === 'isExchange') {
               const finalQty = field === 'qty' ? updatedDesc.qty : desc.qty;
               const finalRate = field === 'rate' ? (value || 0) : desc.rate;
-              
+              const sign = updatedDesc.isExchange ? -1 : 1;
+
               // Only calculate amount if both values are valid and positive
               if (finalQty > 0 && finalRate > 0) {
-                updatedDesc.amount = finalQty * finalRate;
+                updatedDesc.amount = finalQty * finalRate * sign;
               } else {
                 // Set amount to 0 if either value is invalid/empty/zero
                 updatedDesc.amount = 0;
@@ -477,10 +485,14 @@ const ProductDescriptionManager: React.FC<ProductDescriptionManagerProps> = ({
         
         // Recalculate product total
         const total = updatedDescriptions.reduce((sum, desc) => sum + desc.amount, 0);
-        
+
         return {
           ...product,
           descriptions: updatedDescriptions,
+          // Rolled up so a reader downstream can label the whole product without
+          // re-deriving it from the sub-items.
+          isExchange:
+            updatedDescriptions.length > 0 && updatedDescriptions.every((desc) => desc.isExchange),
           total
         };
       }
@@ -641,9 +653,13 @@ const ProductDescriptionManager: React.FC<ProductDescriptionManagerProps> = ({
                   {/* Total Amount */}
                   <div className="sm:col-span-1 lg:col-span-3">
                     <Label className="text-sm font-medium text-gray-700 dark:text-gray-300">Total (₹)</Label>
-                    <div className="mt-1 p-2 bg-white border border-gray-200 rounded-md">
-                      <span className="font-semibold text-purple-600">
-                        ₹{product.total.toFixed(2)}
+                    <div className="mt-1 p-2 bg-white border border-gray-200 rounded-md dark:bg-gray-900">
+                      <span
+                        className={`font-semibold ${
+                          product.total < 0 ? 'text-blue-700 dark:text-blue-400' : 'text-purple-600'
+                        }`}
+                      >
+                        {product.total < 0 ? '− ' : ''}₹{Math.abs(product.total).toFixed(2)}
                       </span>
                     </div>
                   </div>
@@ -673,13 +689,27 @@ const ProductDescriptionManager: React.FC<ProductDescriptionManagerProps> = ({
 
                 {/* Store-sale flag — feeds the Sales category in ROI Analytics */}
                 <div className="mt-3 flex flex-wrap items-center gap-2">
-                  <label className="flex w-fit cursor-pointer items-center gap-2 rounded-md border border-amber-200 bg-white px-2.5 py-1.5 text-xs font-medium text-amber-800 hover:bg-amber-50 dark:border-amber-800 dark:bg-gray-900 dark:text-amber-300">
+                  {/* Icon only, matching the sub-item toggles. The wording lives in the
+                      tooltip and the screen-reader label; the amber fill is the state. */}
+                  <label
+                    title={
+                      product.isSale
+                        ? 'Sold from store — the whole product counts as a Sale'
+                        : 'Mark the whole product as sold from store (counts as a Sale)'
+                    }
+                    className={`flex w-fit cursor-pointer items-center gap-2 rounded-md border px-2.5 py-2 ${
+                      product.isSale
+                        ? 'border-amber-300 bg-amber-50 text-amber-700 dark:border-amber-700 dark:bg-amber-950/40 dark:text-amber-300'
+                        : 'border-gray-200 bg-white text-gray-500 hover:bg-amber-50 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-400'
+                    }`}
+                  >
                     <Checkbox
                       checked={!!product.isSale}
                       onCheckedChange={(checked) => toggleProductSale(product.id, checked === true)}
+                      aria-label="Sold from store"
                     />
-                    <ShoppingBag className="h-3.5 w-3.5" />
-                    Sold from store (counts as a Sale)
+                    <ShoppingBag className="h-4 w-4 shrink-0" />
+                    <span className="sr-only">Sold from store (counts as a Sale)</span>
                   </label>
                   {product.descriptions.length > 0 && saleCount(product) > 0 && (
                     <span className="text-xs text-amber-700 dark:text-amber-400">
@@ -709,7 +739,7 @@ const ProductDescriptionManager: React.FC<ProductDescriptionManagerProps> = ({
                           fields and `minmax(0,1fr)` for the description mean the row fits on
                           one line and the description absorbs whatever is left over.
                         */}
-                        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-[1.75rem_minmax(0,1fr)_5.5rem_6.5rem_7rem_auto_2.75rem] gap-3 items-end">
+                        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-[1.75rem_minmax(0,1fr)_5rem_6rem_6.5rem_auto_auto_2.75rem] gap-3 items-end">
                           {/* Sub-Item Serial Number */}
                           <div className="sm:col-span-1 lg:col-span-1 flex items-center justify-center">
                             <div className="w-6 h-6 bg-gray-50 dark:bg-gray-800/500 text-white rounded-full flex items-center justify-center text-xs font-medium">
@@ -774,22 +804,68 @@ const ProductDescriptionManager: React.FC<ProductDescriptionManagerProps> = ({
                           {/* Amount */}
                           <div className="sm:col-span-1 lg:col-span-1">
                             <Label className="text-sm font-medium text-gray-700 dark:text-gray-300">Amount (₹)</Label>
-                            <div className="mt-1 p-2 bg-white border border-gray-200 rounded-md">
-                              <span className="font-semibold text-green-700">
-                                ₹{desc.amount.toFixed(2)}
+                            <div className="mt-1 p-2 bg-white border border-gray-200 rounded-md dark:bg-gray-900">
+                              {/* A credit is shown as a credit — a bare "-2200" beside all
+                                  the charges is too easy to misread on a busy bill. */}
+                              <span
+                                className={`font-semibold ${
+                                  desc.amount < 0 ? 'text-blue-700 dark:text-blue-400' : 'text-green-700'
+                                }`}
+                              >
+                                {desc.amount < 0 ? '− ' : ''}₹{Math.abs(desc.amount).toFixed(2)}
                               </span>
                             </div>
                           </div>
 
-                          {/* Per-item store-sale flag — always available, so an item can
-                              be unticked even when the whole product was marked as a sale.
-                              It lives inside the grid so it shares the row on desktop
-                              instead of adding a second line to every sub-item. */}
+                          {/*
+                            Exchange: this garment came back and the line is a credit, not a
+                            charge. Ticking it flips the stored amount negative (see
+                            updateDescription) so the bill total nets out on its own.
+                          */}
                           <label
-                            className={`flex w-fit cursor-pointer items-center gap-2 whitespace-nowrap rounded-md border px-2.5 py-1.5 text-xs font-medium sm:col-span-2 lg:col-span-1 lg:mb-0.5 ${
+                            title={
+                              desc.isExchange
+                                ? 'Exchange — this line is credited back to the customer'
+                                : 'Mark as an exchange (credit)'
+                            }
+                            className={`flex w-fit cursor-pointer items-center gap-2 rounded-md border px-2.5 py-2 sm:col-span-2 lg:col-span-1 lg:mb-0.5 ${
+                              desc.isExchange
+                                ? 'border-blue-300 bg-blue-50 text-blue-700 dark:border-blue-700 dark:bg-blue-950/40 dark:text-blue-300'
+                                : 'border-gray-200 bg-white text-gray-500 hover:bg-blue-50 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-400'
+                            }`}
+                          >
+                            <Checkbox
+                              checked={!!desc.isExchange}
+                              onCheckedChange={(checked) =>
+                                updateDescription(
+                                  product.id,
+                                  desc.id,
+                                  'isExchange' as keyof ProductDescription,
+                                  checked === true
+                                )
+                              }
+                              aria-label="Exchange (credit)"
+                            />
+                            <ArrowLeftRight className="h-4 w-4 shrink-0" />
+                            <span className="sr-only">Exchange</span>
+                          </label>
+
+                          {/*
+                            Per-item store-sale flag — always available, so an item can be
+                            unticked even when the whole product was marked as a sale.
+
+                            Icon only. The words "Sold from store" were repeated on every
+                            sub-item of every product, which is a lot of the same sentence
+                            for a control the user already recognises; the bag icon carries
+                            it, and the meaning stays available through the tooltip and the
+                            screen-reader label. The amber fill is what tells you it is on.
+                          */}
+                          <label
+                            title={desc.isSale ? 'Sold from store — counts as a Sale' : 'Mark as sold from store'}
+                            className={`flex w-fit cursor-pointer items-center gap-2 rounded-md border px-2.5 py-2 sm:col-span-2 lg:col-span-1 lg:mb-0.5 ${
                               desc.isSale
-                                ? 'border-amber-300 bg-amber-50 text-amber-800 dark:border-amber-700 dark:bg-amber-950/40 dark:text-amber-300'
-                                : 'border-gray-200 bg-white text-gray-600 hover:bg-amber-50 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-400'
+                                ? 'border-amber-300 bg-amber-50 text-amber-700 dark:border-amber-700 dark:bg-amber-950/40 dark:text-amber-300'
+                                : 'border-gray-200 bg-white text-gray-500 hover:bg-amber-50 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-400'
                             }`}
                           >
                             <Checkbox
@@ -802,12 +878,10 @@ const ProductDescriptionManager: React.FC<ProductDescriptionManagerProps> = ({
                                   checked === true
                                 )
                               }
+                              aria-label="Sold from store"
                             />
-                            <ShoppingBag className="h-3.5 w-3.5 shrink-0" />
-                            {/* Full wording where there is room; the icon plus a short
-                                label carries it on narrower desktops. */}
-                            <span className="hidden xl:inline">Sold from store</span>
-                            <span className="xl:hidden">Store sale</span>
+                            <ShoppingBag className="h-4 w-4 shrink-0" />
+                            <span className="sr-only">Sold from store</span>
                           </label>
                           {/* Delete button */}
                           <div className="sm:col-span-1 lg:col-span-1 lg:justify-self-end">

@@ -354,7 +354,10 @@ const BillFormAdvanced: React.FC<BillFormAdvancedProps> = ({
             quantity: desc.qty,
             rate: desc.rate,
             cost: 0,
-            amount: desc.amount
+            amount: desc.amount,
+            // Carried through so calculateBillTotals keeps the credit negative when it
+            // recomputes quantity x rate.
+            isExchange: desc.isExchange
           });
         });
       });
