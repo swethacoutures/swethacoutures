@@ -614,31 +614,38 @@ const ProductDescriptionManager: React.FC<ProductDescriptionManagerProps> = ({
               <div key={product.id} className="border-2 border-purple-200 rounded-lg bg-white shadow-sm">
                 {/* Header Panel - Main Product */}
                 <div className="p-4 bg-purple-50 border-b border-purple-200">
-                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-12 gap-4 items-center">
+                    {/*
+                      An explicit column template rather than a 12-column grid. The serial
+                      badge and the chevron each used to occupy a full 1/12 column, which at
+                      desktop width is ~110px for a 32px circle — that was the yawning gap
+                      between the number, the arrow and the product name. `auto` sizes them
+                      to their contents, the name takes whatever is left, and the store-sale
+                      toggle now sits on this row instead of on one of its own.
+                    */}
+                    <div className="grid grid-cols-[auto_auto_1fr] items-center gap-x-3 gap-y-3 lg:grid-cols-[auto_auto_minmax(0,1fr)_9rem_auto_auto] lg:gap-x-4">
                       {/* Serial Number */}
-                      <div className="sm:col-span-1 lg:col-span-1 flex justify-center">
-                        <div className="w-8 h-8 bg-purple-600 text-white rounded-full flex items-center justify-center font-semibold text-sm">
-                          {productIndex + 1}
-                        </div>
+                      <div className="w-8 h-8 bg-purple-600 text-white rounded-full flex items-center justify-center font-semibold text-sm shrink-0">
+                        {productIndex + 1}
                       </div>
-                      
+
                       {/* Chevron Toggle */}
-                      <div className="sm:col-span-1 lg:col-span-1 flex justify-center">
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => toggleProductExpansion(product.id)}
-                          className="p-2 hover:bg-purple-100"
-                        >
-                          {product.expanded ? (
-                            <ChevronDown className="h-4 w-4 text-purple-600" />
-                          ) : (
-                            <ChevronRight className="h-4 w-4 text-purple-600" />
-                          )}
-                        </Button>
-                      </div>                      {/* Product Name */}
-                      <div className="sm:col-span-2 lg:col-span-5">
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => toggleProductExpansion(product.id)}
+                        className="p-2 hover:bg-purple-100 shrink-0"
+                        aria-label={product.expanded ? 'Collapse product' : 'Expand product'}
+                      >
+                        {product.expanded ? (
+                          <ChevronDown className="h-4 w-4 text-purple-600" />
+                        ) : (
+                          <ChevronRight className="h-4 w-4 text-purple-600" />
+                        )}
+                      </Button>
+
+                      {/* Product Name */}
+                      <div className="min-w-0">
                         <Label className="text-sm font-medium text-gray-700 dark:text-gray-300">Product Name *</Label>
                         <ProductNameInput
                           value={product.name}
@@ -650,67 +657,70 @@ const ProductDescriptionManager: React.FC<ProductDescriptionManagerProps> = ({
                         />
                       </div>
 
-                  {/* Total Amount */}
-                  <div className="sm:col-span-1 lg:col-span-3">
-                    <Label className="text-sm font-medium text-gray-700 dark:text-gray-300">Total (₹)</Label>
-                    <div className="mt-1 p-2 bg-white border border-gray-200 rounded-md dark:bg-gray-900">
-                      <span
-                        className={`font-semibold ${
-                          product.total < 0 ? 'text-blue-700 dark:text-blue-400' : 'text-purple-600'
+                      {/* Total Amount */}
+                      <div className="col-span-3 min-w-0 lg:col-span-1">
+                        <Label className="text-sm font-medium text-gray-700 dark:text-gray-300">Total (₹)</Label>
+                        <div className="mt-1 p-2 bg-white border border-gray-200 rounded-md dark:bg-gray-900">
+                          <span
+                            className={`font-semibold ${
+                              product.total < 0 ? 'text-blue-700 dark:text-blue-400' : 'text-purple-600'
+                            }`}
+                          >
+                            {product.total < 0 ? '− ' : ''}₹{Math.abs(product.total).toFixed(2)}
+                          </span>
+                        </div>
+                      </div>
+
+                      {/* Store-sale flag — feeds the Sales category in ROI Analytics.
+                          Icon only, matching the sub-item toggles: the wording lives in the
+                          tooltip and the screen-reader label, and the amber fill is the state. */}
+                      <label
+                        title={
+                          product.isSale
+                            ? 'Sold from store — the whole product counts as a Sale'
+                            : 'Mark the whole product as sold from store (counts as a Sale)'
+                        }
+                        className={`flex w-fit cursor-pointer items-center gap-2 rounded-md border px-2.5 py-2 lg:mt-6 ${
+                          product.isSale
+                            ? 'border-amber-300 bg-amber-50 text-amber-700 dark:border-amber-700 dark:bg-amber-950/40 dark:text-amber-300'
+                            : 'border-gray-200 bg-white text-gray-500 hover:bg-amber-50 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-400'
                         }`}
                       >
-                        {product.total < 0 ? '− ' : ''}₹{Math.abs(product.total).toFixed(2)}
-                      </span>
+                        <Checkbox
+                          checked={!!product.isSale}
+                          onCheckedChange={(checked) => toggleProductSale(product.id, checked === true)}
+                          aria-label="Sold from store"
+                        />
+                        <ShoppingBag className="h-4 w-4 shrink-0" />
+                        <span className="sr-only">Sold from store (counts as a Sale)</span>
+                      </label>
+
+                      {/* Add Sub-Item & Delete */}
+                      <div className="flex justify-end gap-2 lg:mt-6">
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          onClick={() => addDescription(product.id)}
+                          className="text-blue-600 border-blue-200 hover:bg-blue-50"
+                          aria-label="Add sub-item"
+                        >
+                          <Plus className="h-4 w-4" />
+                        </Button>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          onClick={() => removeProduct(product.id)}
+                          className="text-red-600 border-red-200 hover:bg-red-50"
+                          aria-label="Remove product"
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </Button>
+                      </div>
                     </div>
-                  </div>
 
-                  {/* Add Sub-Item & Delete buttons */}
-                  <div className="sm:col-span-2 lg:col-span-2 flex justify-end gap-2">
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      onClick={() => addDescription(product.id)}
-                      className="text-blue-600 border-blue-200 hover:bg-blue-50"
-                    >
-                      <Plus className="h-4 w-4" />
-                    </Button>
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      onClick={() => removeProduct(product.id)}
-                      className="text-red-600 border-red-200 hover:bg-red-50"
-                    >
-                      <Trash2 className="h-4 w-4" />
-                    </Button>
-                  </div>
-                </div>
-
-                {/* Store-sale flag — feeds the Sales category in ROI Analytics */}
-                <div className="mt-3 flex flex-wrap items-center gap-2">
-                  {/* Icon only, matching the sub-item toggles. The wording lives in the
-                      tooltip and the screen-reader label; the amber fill is the state. */}
-                  <label
-                    title={
-                      product.isSale
-                        ? 'Sold from store — the whole product counts as a Sale'
-                        : 'Mark the whole product as sold from store (counts as a Sale)'
-                    }
-                    className={`flex w-fit cursor-pointer items-center gap-2 rounded-md border px-2.5 py-2 ${
-                      product.isSale
-                        ? 'border-amber-300 bg-amber-50 text-amber-700 dark:border-amber-700 dark:bg-amber-950/40 dark:text-amber-300'
-                        : 'border-gray-200 bg-white text-gray-500 hover:bg-amber-50 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-400'
-                    }`}
-                  >
-                    <Checkbox
-                      checked={!!product.isSale}
-                      onCheckedChange={(checked) => toggleProductSale(product.id, checked === true)}
-                      aria-label="Sold from store"
-                    />
-                    <ShoppingBag className="h-4 w-4 shrink-0" />
-                    <span className="sr-only">Sold from store (counts as a Sale)</span>
-                  </label>
+                    <div className="mt-3 flex flex-wrap items-center gap-2">
                   {product.descriptions.length > 0 && saleCount(product) > 0 && (
                     <span className="text-xs text-amber-700 dark:text-amber-400">
                       {saleCount(product)} of {product.descriptions.length} item

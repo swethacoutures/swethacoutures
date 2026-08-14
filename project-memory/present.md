@@ -27,6 +27,18 @@
   wrap handling, so "pending 1 year 1 month" broke onto three lines inside a rounded pill.
   `formatPendingShort()` gives "1y 1m" for tight spaces, the badge is `whitespace-nowrap`,
   and the full phrase is the tooltip.
+- **A debtor in Payments to Collect is a card, not a row.** It was one horizontal flex line
+  — text left, amount and three buttons right — and in the half-width column this panel
+  actually occupies, the buttons held their size and crushed the text side: the customer's
+  name truncated to a single letter and the billed-date line wrapped one word at a time
+  around the buttons. It now stacks: who → which bills → how much → a three-up strip of
+  actions along the bottom, the same rhythm as the bill cards on /billing. Verified at
+  1180/1400/1500/1920.
+- **The Product Details header row** used a 12-column grid, so the serial badge and the
+  chevron each occupied a full 1/12 (~110px at desktop) for a 32px circle and a 16px arrow —
+  that was the huge gap before the product name. It is an explicit
+  `[auto_auto_minmax(0,1fr)_9rem_auto_auto]` template now, and the store-sale toggle sits on
+  that row rather than on one of its own.
 
 ## 0aaa. 2026-08-14 — the site is built around the real logo, and booking is live
 

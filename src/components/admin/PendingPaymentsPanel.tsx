@@ -234,50 +234,71 @@ const PendingPaymentsPanel: React.FC<PendingPaymentsPanelProps> = ({ limit = 6, 
           ) : (
             <div className="space-y-2">
               {visible.map((row) => (
+                /*
+                 * A card, not a row.
+                 *
+                 * This used to be one horizontal flex line: name and details on the left,
+                 * amount and three buttons on the right. In the half-width column this
+                 * panel actually lives in, the buttons held their size and squeezed the
+                 * text side down to nothing — the customer's name truncated to a single
+                 * letter and "Billed 07 Jul 2025 · 9701886789" wrapped one word per line
+                 * around the buttons. Stacking it (who → what → how much → what to do)
+                 * means nothing competes for width and the layout holds at any size.
+                 */
                 <div
                   key={row.key}
-                  className="flex flex-col gap-2 rounded-lg border border-gray-200 p-3 hover:bg-gray-50 sm:flex-row sm:items-center sm:justify-between dark:border-gray-700 dark:hover:bg-gray-800/60"
+                  className="rounded-lg border border-gray-200 p-3 transition-colors hover:bg-gray-50 dark:border-gray-700 dark:hover:bg-gray-800/60"
                 >
-                  <div className="min-w-0 flex-1">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <span className="min-w-0 truncate font-semibold text-gray-900 dark:text-gray-100">
+                  {/* Who, and how overdue */}
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <p className="truncate font-semibold text-gray-900 dark:text-gray-100">
                         {row.name}
-                      </span>
-                      {/*
-                        `whitespace-nowrap` and the short form together. The badge is a
-                        rounded pill with no wrap handling of its own, so a long phrase like
-                        "pending 1 year 1 month" broke onto three lines and tore the pill
-                        apart in a narrow column. The full wording is still one hover away.
-                      */}
-                      <Badge
-                        variant="outline"
-                        title={`Pending ${formatPendingSince(row.daysPending)}`}
-                        className={`shrink-0 whitespace-nowrap ${
-                          row.daysPending >= 30
-                            ? 'border-red-300 text-red-700 dark:text-red-300'
-                            : 'border-amber-300 text-amber-700 dark:text-amber-300'
-                        }`}
-                      >
-                        {formatPendingShort(row.daysPending)}
-                      </Badge>
+                      </p>
+                      <p className="mt-0.5 text-xs text-gray-500 dark:text-gray-400">
+                        Billed {formatBilledDate(row.oldest)}
+                        {row.phone ? ` · ${row.phone}` : ' · No phone'}
+                      </p>
                     </div>
-                    <p className="mt-0.5 text-xs text-gray-500 dark:text-gray-400">
-                      Billed {formatBilledDate(row.oldest)} · {row.phone || 'No phone'}
-                    </p>
-                    <p className="truncate text-xs text-gray-500 dark:text-gray-400">
-                      {row.bills.map((bill) => bill.billId).join(', ')}
-                    </p>
+                    {/*
+                      `whitespace-nowrap` and the short form together. The badge is a
+                      rounded pill with no wrap handling of its own, so a long phrase like
+                      "pending 1 year 1 month" broke onto three lines and tore the pill
+                      apart. The full wording is still one hover away.
+                    */}
+                    <Badge
+                      variant="outline"
+                      title={`Pending ${formatPendingSince(row.daysPending)}`}
+                      className={`shrink-0 whitespace-nowrap ${
+                        row.daysPending >= 30
+                          ? 'border-red-300 text-red-700 dark:text-red-300'
+                          : 'border-amber-300 text-amber-700 dark:text-amber-300'
+                      }`}
+                    >
+                      {formatPendingShort(row.daysPending)}
+                    </Badge>
                   </div>
 
-                  <div className="flex shrink-0 items-center justify-between gap-2 sm:justify-end">
-                    <span className="whitespace-nowrap text-lg font-bold text-red-600">
+                  {/* How much, and against which bills */}
+                  <div className="mt-2 flex items-end justify-between gap-3">
+                    <p className="min-w-0 truncate text-xs text-gray-500 dark:text-gray-400">
+                      {row.bills.length} bill{row.bills.length === 1 ? '' : 's'} ·{' '}
+                      {row.bills.map((bill) => bill.billId).join(', ')}
+                    </p>
+                    <span className="shrink-0 whitespace-nowrap text-lg font-bold text-red-600">
                       {formatCurrency(row.outstanding)}
                     </span>
+                  </div>
+
+                  {/* What to do about it. Equal-width so the row reads as one control
+                      strip rather than three buttons of assorted sizes. */}
+                  <div className="mt-3 grid grid-cols-3 gap-2 border-t border-gray-100 pt-3 dark:border-gray-800">
                     <Button
                       size="sm"
                       variant="outline"
                       className="border-green-200 bg-green-50 text-green-700 hover:bg-green-100 dark:border-green-800 dark:bg-green-900/20 dark:text-green-400"
                       disabled={!row.phone}
+                      title={row.phone ? 'Send a payment reminder on WhatsApp' : 'No phone number on file'}
                       onClick={() =>
                         setWaCustomer({
                           id: row.key,
@@ -297,8 +318,8 @@ const PendingPaymentsPanel: React.FC<PendingPaymentsPanelProps> = ({ limit = 6, 
                         })
                       }
                     >
-                      <MessageSquare className="h-4 w-4 sm:mr-1" />
-                      <span className="hidden sm:inline">Remind</span>
+                      <MessageSquare className="mr-1.5 h-4 w-4 shrink-0" />
+                      Remind
                     </Button>
                     <Button
                       size="sm"
@@ -308,19 +329,20 @@ const PendingPaymentsPanel: React.FC<PendingPaymentsPanelProps> = ({ limit = 6, 
                       title={`Record a payment against ${row.bills[0].billId}`}
                     >
                       {openingPayment === row.bills[0].id ? (
-                        <Loader2 className="h-4 w-4 animate-spin sm:mr-1" />
+                        <Loader2 className="mr-1.5 h-4 w-4 shrink-0 animate-spin" />
                       ) : (
-                        <RupeeIcon className="h-4 w-4 sm:mr-1" />
+                        <RupeeIcon className="mr-1.5 h-4 w-4 shrink-0" />
                       )}
-                      <span className="hidden sm:inline">Record</span>
+                      Record
                     </Button>
                     <Button
                       size="sm"
-                      variant="ghost"
+                      variant="outline"
                       onClick={() => navigate(`/billing/${row.bills[0].id}`)}
                       title="Open the bill"
                     >
-                      <Receipt className="h-4 w-4" />
+                      <Receipt className="mr-1.5 h-4 w-4 shrink-0" />
+                      Bill
                     </Button>
                   </div>
                 </div>
