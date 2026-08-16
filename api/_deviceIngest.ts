@@ -148,15 +148,32 @@ export interface NormalisedTime {
 }
 
 /** Validates and normalises a device timestamp. Returns null for anything unparseable. */
-export function normaliseTimestamp(raw: string): NormalisedTime | null {
+export function normaliseTimestamp(
+  raw: string,
+  /**
+   * Minutes to add to whatever the device said, to turn its clock into the real one.
+   *
+   * 🔴 THIS IS THE ONE THAT ACTUALLY PROTECTS PAYROLL. Some terminals cannot be made to
+   * keep the right time — this shop's K40 Pro re-synchronises from the network on every
+   * request and can only hold a whole-hour timezone, so on India's UTC+5:30 it sits exactly
+   * 30 minutes behind no matter what is set on the keypad or sent as a command.
+   *
+   * Rather than keep fighting the device, the correction is applied here, where we have
+   * complete control: the punch is stored at the time it really happened. The screen on the
+   * wall stays half an hour out — cosmetic — while the hours people are paid for are right,
+   * which is the part that matters.
+   */
+  offsetMinutes = 0
+): NormalisedTime | null {
   const match = /^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})(?::(\d{2}))?$/.exec(
     String(raw || '').trim()
   );
   if (!match) return null;
 
-  const [, year, month, day, hour, minute, second = '00'] = match;
+  let [, year, month, day, hour, minute, second = '00'] = match;
 
   if (Number(hour) > 23 || Number(minute) > 59 || Number(second) > 59) return null;
+
 
   // Reject impossible dates rather than letting Date silently roll them over —
   // '2026-02-31' quietly becoming 3 March would be a wrong attendance day.
@@ -167,6 +184,33 @@ export function normaliseTimestamp(raw: string): NormalisedTime | null {
     probe.getUTCDate() !== Number(day)
   ) {
     return null;
+  }
+
+  /*
+   * The correction is applied AFTER the date has been validated, never before. Shifting
+   * first would turn an impossible date into a plausible one — '2026-02-31' plus half an
+   * hour becomes 3 March, which then passes every check and quietly files a punch on a day
+   * it did not happen. Rejecting nonsense is the whole point of the probe above.
+   *
+   * Shifted by arithmetic on a UTC instant and read back with UTC getters — never local
+   * ones, because the server runs in UTC and a laptop in Kakinada does not, and the answer
+   * must not depend on which. This also carries a punch across midnight, and across a month
+   * or year boundary, which a naive minute-add would not.
+   */
+  if (offsetMinutes) {
+    const shifted = new Date(
+      Date.UTC(
+        Number(year), Number(month) - 1, Number(day),
+        Number(hour), Number(minute), Number(second)
+      ) + offsetMinutes * 60 * 1000
+    );
+    const pad = (value: number) => String(value).padStart(2, '0');
+    year = String(shifted.getUTCFullYear());
+    month = pad(shifted.getUTCMonth() + 1);
+    day = pad(shifted.getUTCDate());
+    hour = pad(shifted.getUTCHours());
+    minute = pad(shifted.getUTCMinutes());
+    second = pad(shifted.getUTCSeconds());
   }
 
   return {
@@ -209,7 +253,11 @@ export interface AttlogRow {
  * A bad row is skipped and counted, never thrown. Rejecting the whole upload would make the
  * device replay it forever, so one corrupt row would block every good punch behind it.
  */
-export function parseAttlog(body: string): {
+export function parseAttlog(
+  body: string,
+  /** Minutes to add to every timestamp — see `normaliseTimestamp`. */
+  offsetMinutes = 0
+): {
   rows: AttlogRow[];
   skipped: { line: number; raw: string; reason: string }[];
 } {
@@ -225,7 +273,7 @@ export function parseAttlog(body: string): {
       return;
     }
 
-    const normalised = normaliseTimestamp(timestamp);
+    const normalised = normaliseTimestamp(timestamp, offsetMinutes);
     if (!normalised) {
       skipped.push({ line: index + 1, raw: line, reason: `unparseable timestamp "${timestamp}"` });
       return;
@@ -428,6 +476,8 @@ export interface DeviceState {
   status: string;
   punchCount: number;
   isNew: boolean;
+  /** Minutes added to this terminal's punch times to correct a clock that cannot be fixed. */
+  clockOffsetMinutes?: number;
   /**
    * When the server last pushed the clock to this device. Carried on the returned state so
    * the command poll can decide whether another sync is due without a second read — leaving
@@ -485,6 +535,7 @@ export async function touchDevice(
     punchCount: Number(existing.punchCount || 0),
     isNew: false,
     lastClockSyncAt: existing.lastClockSyncAt ? String(existing.lastClockSyncAt) : undefined,
+    clockOffsetMinutes: Number(existing.clockOffsetMinutes) || 0,
   };
 }
 
@@ -1128,7 +1179,8 @@ export async function handleDeviceRequest(
       if (blocked) return ok(`Ignored ${table || 'data'} from blocked device ${serialNumber}`);
 
       if (table === 'ATTLOG') {
-        const { rows, skipped } = parseAttlog(body);
+        // Correct a terminal whose clock cannot be fixed, before anything is stored.
+        const { rows, skipped } = parseAttlog(body, device.clockOffsetMinutes || 0);
         const result = await recordPunches(store, config, serialNumber, rows, { fold: approved });
         if (approved) await markDevicePunches(store, serialNumber, device, result.stored);
 

@@ -20,6 +20,7 @@ import {
   defaultConfig,
   clockCompensationMinutes,
   deviceDateHeader,
+  normaliseTimestamp,
   handleDeviceRequest,
   noticeClockDrift,
 } from '../api/_deviceIngest.ts';
@@ -347,6 +348,38 @@ try {
       "header + the device's +5:00 lands on the correct Indian time",
       deviceWouldShow.getTime() === correctIst.getTime(),
       `${deviceWouldShow.toISOString()} vs ${correctIst.toISOString()}`);
+  }
+
+  /* ------------------------------ 7c. correcting an unfixable clock */
+  section('7c. Punches are corrected for a terminal whose clock cannot be fixed');
+  {
+    // The shop's case: the device is 30 minutes slow and will not hold a correction.
+    const late = normaliseTimestamp('2026-08-17 00:01:23', 30);
+    check('a 30-minute correction is applied to the punch', late?.local === '2026-08-17 00:31:23', late?.local);
+    check('and the day is unchanged when it does not cross midnight', late?.date === '2026-08-17');
+
+    // The case a naive minute-add gets wrong.
+    const overMidnight = normaliseTimestamp('2026-08-16 23:45:00', 30);
+    check('a correction across midnight moves the DAY too',
+      overMidnight?.local === '2026-08-17 00:15:00' && overMidnight?.date === '2026-08-17',
+      JSON.stringify(overMidnight));
+
+    // Month and year boundaries must roll properly, not produce the 32nd.
+    const overMonth = normaliseTimestamp('2026-08-31 23:50:00', 30);
+    check('and rolls the month correctly', overMonth?.date === '2026-09-01', overMonth?.date);
+
+    // A device ahead of time gets pulled back.
+    const early = normaliseTimestamp('2026-08-17 00:31:23', -30);
+    check('a negative correction works too', early?.local === '2026-08-17 00:01:23', early?.local);
+
+    // Zero must be a true no-op, so a healthy device is never touched.
+    check('no correction means the punch is stored exactly as sent',
+      normaliseTimestamp('2026-08-17 00:01:23', 0)?.local === '2026-08-17 00:01:23');
+    check('and the default is no correction',
+      normaliseTimestamp('2026-08-17 00:01:23')?.local === '2026-08-17 00:01:23');
+
+    // An impossible timestamp is still rejected, correction or not.
+    check('a nonsense timestamp is still refused', normaliseTimestamp('2026-02-31 10:00:00', 30) === null);
   }
 
   /* ------------------------------------------------- 7b. clock drift */

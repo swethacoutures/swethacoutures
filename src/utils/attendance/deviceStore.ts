@@ -303,6 +303,37 @@ export async function requestClockSync(sn: string): Promise<void> {
   });
 }
 
+/**
+ * Corrects the times of every punch this terminal sends from now on.
+ *
+ * The last resort for a device that will not keep the right time — see
+ * `normaliseTimestamp` in api/_deviceIngest.ts. Applies to punches arriving *after* this is
+ * set; punches already stored keep the times they were recorded with, because silently
+ * rewriting attendance history is not something a button should do.
+ */
+export async function setDeviceClockOffset(sn: string, minutes: number): Promise<void> {
+  const safe = Math.round(minutes);
+  if (!Number.isFinite(safe) || Math.abs(safe) > 720) {
+    throw new Error('A clock correction must be within 12 hours.');
+  }
+
+  await setDoc(
+    doc(db, DEVICES_COLLECTION, sn),
+    { clockOffsetMinutes: safe, updatedAt: new Date().toISOString() },
+    { merge: true }
+  );
+
+  await logActivity({
+    action: 'edit',
+    entity: 'device',
+    entityId: sn,
+    summary: safe
+      ? `Punches from ${sn} will be corrected by ${safe > 0 ? '+' : ''}${safe} minutes`
+      : `Cleared the punch time correction on ${sn}`,
+    after: { clockOffsetMinutes: safe },
+  });
+}
+
 /* -------------------------------------------------------------------- health */
 
 export type DeviceHealth = 'healthy' | 'stale' | 'waiting' | 'pending' | 'blocked' | 'none';

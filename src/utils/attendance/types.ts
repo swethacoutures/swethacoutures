@@ -164,6 +164,13 @@ export interface AttendanceDevice {
    * before it turns into a month of wrong hours.
    */
   lastClockDriftMinutes?: number;
+  /**
+   * Minutes added to this terminal's punch times before they are stored.
+   *
+   * For a device whose clock cannot be made right. The wall display stays wrong, which is
+   * cosmetic; the recorded hours become right, which is payroll.
+   */
+  clockOffsetMinutes?: number;
   ip?: string;
   firmware?: string;
   firstSeenAt?: string;

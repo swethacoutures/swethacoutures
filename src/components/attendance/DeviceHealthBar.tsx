@@ -16,6 +16,7 @@ import {
   approveDevice,
   blockDevice,
   requestClockSync,
+  setDeviceClockOffset,
   summariseDeviceHealth,
 } from '@/utils/attendance/deviceStore';
 import type { AttendanceDevice } from '@/utils/attendance/types';
@@ -110,6 +111,45 @@ const DeviceHealthBar: React.FC<DeviceHealthBarProps> = ({ devices, loading, onC
     } catch (error) {
       toast({
         title: 'Could not queue the clock sync',
+        description: error instanceof Error ? error.message : 'Unknown error',
+        variant: 'destructive',
+      });
+    } finally {
+      setBusySn(null);
+    }
+  };
+
+  /**
+   * Correct every future punch from a terminal whose clock cannot be fixed.
+   *
+   * The honest last resort. The wall display stays wrong — cosmetic — while the hours people
+   * are paid for become right, which is the part that decides wages.
+   */
+  const handleApplyOffset = async (device: AttendanceDevice, minutes: number) => {
+    if (
+      !window.confirm(
+        `Correct every punch from this device by ${minutes > 0 ? "+" : ""}${minutes} minutes?` +
+          `\n\nUse this when the terminal will not keep the right time. The clock on the ` +
+          `wall stays wrong, but the recorded hours become correct.` +
+          `\n\nPunches already saved keep the times they were recorded with.`
+      )
+    ) {
+      return;
+    }
+
+    setBusySn(device.sn);
+    try {
+      await setDeviceClockOffset(device.sn, minutes);
+      toast({
+        title: minutes ? 'Punch times will be corrected' : 'Correction removed',
+        description: minutes
+          ? `Every punch from now on is shifted by ${minutes > 0 ? '+' : ''}${minutes} minutes.`
+          : 'Punches are stored exactly as the device sends them.',
+      });
+      onChanged();
+    } catch (error) {
+      toast({
+        title: 'Could not save the correction',
         description: error instanceof Error ? error.message : 'Unknown error',
         variant: 'destructive',
       });
@@ -285,6 +325,48 @@ const DeviceHealthBar: React.FC<DeviceHealthBarProps> = ({ devices, loading, onC
               {clockWarning}
             </p>
           )}
+
+          {/* Already correcting: say so, because it explains why the wall clock and the
+              recorded times disagree, and give a way to undo it. */}
+          {!!summary.device?.clockOffsetMinutes && (
+            <p className="mt-1 flex flex-wrap items-center gap-x-2 text-xs text-gray-600 dark:text-gray-400">
+              <span>
+                Punches are being corrected by{' '}
+                <b>
+                  {summary.device.clockOffsetMinutes > 0 ? '+' : ''}
+                  {summary.device.clockOffsetMinutes} min
+                </b>{' '}
+                as they arrive, so the recorded hours are right even though the terminal's
+                display is not.
+              </span>
+              <button
+                type="button"
+                className="underline hover:text-gray-900 dark:hover:text-gray-200"
+                onClick={() => handleApplyOffset(summary.device!, 0)}
+              >
+                Remove
+              </button>
+            </p>
+          )}
+
+          {/* Offer the correction only when the device is out and not already corrected. */}
+          {!summary.device?.clockOffsetMinutes &&
+            typeof summary.device?.lastClockDriftMinutes === 'number' &&
+            Math.abs(summary.device.lastClockDriftMinutes) > 3 && (
+              <Button
+                variant="outline"
+                size="sm"
+                className="mt-2"
+                disabled={busySn === summary.device.sn}
+                onClick={() =>
+                  handleApplyOffset(summary.device!, summary.device!.lastClockDriftMinutes!)
+                }
+              >
+                <Clock className="mr-1.5 h-3.5 w-3.5" />
+                Correct punches by {summary.device.lastClockDriftMinutes > 0 ? '+' : ''}
+                {summary.device.lastClockDriftMinutes} min
+              </Button>
+            )}
         </div>
 
         {/*
