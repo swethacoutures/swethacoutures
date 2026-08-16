@@ -7,9 +7,10 @@
  * place that joins them, so an employee's pay basis lives in a single spot and their payable
  * salary can be derived from real check-in / check-out times.
  */
-import { doc, updateDoc } from 'firebase/firestore';
+import { doc, setDoc, updateDoc } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 import {
+  EMPLOYEES_COLLECTION,
   fetchAttendanceSettings,
   fetchEmployees,
   fetchRecords,
@@ -30,7 +31,10 @@ export interface StaffPay {
   salaryMode?: SalaryMode;
   salaryAmount?: number;
   bonus?: number;
+  /** The employee's number on the fingerprint device, typed in on the Employees page. */
   attendanceEmpCode?: string;
+  /** Paid hours in a normal day for this person. */
+  standardHoursPerDay?: number;
 }
 
 export interface AttendanceSummary {
@@ -153,27 +157,67 @@ export async function loadAttendanceContext(periodKey: string = toMonthKey(new D
 }
 
 /**
- * Pushes a staff member's pay settings onto their linked attendance employee, so the
- * Payroll tab and the Employees page always quote the same number. Silently does nothing
- * when there is nothing to link to — an unlinked employee is a normal state, not an error.
+ * Makes the attendance side match the Employees page.
+ *
+ * The Employees page is the ONE place pay is decided — basis, amount, standard hours — and
+ * the one place the admin types the employee's number from the fingerprint device. This
+ * mirrors all of that onto the attendance employee, **creating it if it does not exist yet**.
+ *
+ * That creation step is the important part. An admin sets somebody up on their first day,
+ * before they have ever put a finger on the machine, so there is nothing on the attendance
+ * side to update. Without this the person simply would not appear in Payroll until their
+ * first punch, and the pay entered on their record would sit there doing nothing.
+ *
+ * Returns the employee code it wrote to, or null when there is nothing to link to (no code
+ * entered and no name match) — an unlinked staff member is a normal state, not an error.
  */
 export async function syncPayToAttendance(
   staff: StaffPay,
   employees: AttendanceEmployee[]
 ): Promise<string | null> {
   const { employee } = matchAttendanceEmployee(staff, employees);
-  if (!employee) return null;
+  const code = (staff.attendanceEmpCode || '').trim();
 
-  await saveEmployee(employee.empCode, {
+  // Nothing to attach to, and no number to create one under.
+  if (!employee && !code) return null;
+
+  const payload = {
     salaryMode: (staff.salaryMode || null) as SalaryMode | null,
     salaryAmount: staff.salaryAmount || 0,
+    standardHoursPerDay: staff.standardHoursPerDay || 8,
     linkedStaffId: staff.id,
-  });
+  };
 
-  // Record the link on the staff side too, so a later rename cannot break the match.
-  if (staff.attendanceEmpCode !== employee.empCode) {
-    await updateDoc(doc(db, 'staff', staff.id), { attendanceEmpCode: employee.empCode });
+  if (employee) {
+    await saveEmployee(employee.empCode, payload);
+  } else {
+    /*
+     * No attendance employee under this code yet. `setDoc` with merge rather than the
+     * stricter createManualEmployee, because the device may create the very same document
+     * a moment later when the person first punches — a merge lets the two meet in the
+     * middle instead of one of them throwing.
+     */
+    await setDoc(
+      doc(db, EMPLOYEES_COLLECTION, code),
+      {
+        ...payload,
+        empCode: code,
+        name: staff.name || code,
+        active: true,
+        source: 'manual',
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      },
+      { merge: true }
+    );
   }
 
-  return employee.empCode;
+  const written = employee ? employee.empCode : code;
+
+  // Record the link on the staff side too, so a later rename cannot break the match.
+  if (staff.attendanceEmpCode !== written) {
+    await updateDoc(doc(db, 'staff', staff.id), { attendanceEmpCode: written });
+  }
+
+  return written;
 }

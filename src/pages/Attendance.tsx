@@ -220,6 +220,7 @@ const Attendance: React.FC = () => {
             loading={loading}
             onChanged={loadAll}
             periodLabel={periodLabel}
+            settings={settings}
           />
         </TabsContent>
 

@@ -110,14 +110,18 @@ export function dedupePunches(punches: string[], minGapMinutes: number): string[
  *    survives a manual edit (the write merges), so reading punches first would quietly
  *    ignore the correction and keep paying the number the admin just fixed — the edit
  *    would show in the table and do nothing to the payslip.
- * 2. Otherwise the punches are de-duplicated, then paired: 1st→2nd is a worked stretch,
- *    2nd→3rd is time away, 3rd→4th worked again, and so on.
- * 3. Time away only comes off the day if it lasted at least `minBreakMinutes`. Stepping
- *    out for three minutes is not a lunch break, and after de-duplication a short gap is
- *    just as likely to be noise in the pairing as a real absence.
- * 4. A day with only two punches never left for lunch, so the configured fixed break is
- *    deducted instead — but only if the day is longer than the break, so a half-hour
- *    errand cannot come out negative.
+ * 2. Repeat presses are collapsed (see `dedupePunches`).
+ * 3. With an EVEN number of punches left, they pair up cleanly — 1st→2nd worked, 2nd→3rd
+ *    away, 3rd→4th worked — and only the away stretches lasting at least `minBreakMinutes`
+ *    come off the day. Stepping out for three minutes is not a lunch break.
+ * 4. With an ODD number, a punch is missing and the pairing cannot be trusted, so the day
+ *    falls back to "time on the premises, less the standard break" — the same rule as a day
+ *    with no lunch punch at all.
+ *
+ * ⚠️ Point 4 is not a tidy-up, it is the fix for a real miscalculation. Collapsing a repeat
+ * press can turn an even sequence odd, and then every gap's meaning flips: a day punched
+ * 09:00, 12:00, 12:03, 18:00 (a three-minute step outside) collapses to three punches, and
+ * reading the parity would call 12:00→18:00 "time away" and pay 3 hours for a 9-hour day.
  *
  * All of this happens at calculation time rather than being baked into the stored record,
  * so changing a rule recalculates history instead of corrupting it.
@@ -125,29 +129,53 @@ export function dedupePunches(punches: string[], minGapMinutes: number): string[
 export function paidHoursForDay(
   record: Pick<
     AttendanceRecord,
-    'checkIn' | 'checkOut' | 'hoursWorked' | 'punches' | 'manuallyEdited'
+    'checkIn' | 'checkOut' | 'hoursWorked' | 'punches' | 'manuallyEdited' | 'overrideHours'
   >,
   settings: AttendanceSettings = DEFAULT_ATTENDANCE_SETTINGS
 ): number {
-  const breakHours = Math.max(0, settings.breakMinutes ?? DEFAULT_ATTENDANCE_SETTINGS.breakMinutes) / 60;
+  const breakHours =
+    Math.max(0, settings.breakMinutes ?? DEFAULT_ATTENDANCE_SETTINGS.breakMinutes) / 60;
 
-  /** The two-punch rule: one span, one fixed break. */
-  const spanMinusFixedBreak = (): number => {
-    if (!record.checkIn || !record.checkOut) return 0;
-    const span = record.hoursWorked || hoursBetween(record.checkIn, record.checkOut);
-    return round2(span > breakHours ? span - breakHours : span);
-  };
+  /** Time on the premises, less one standard break. Never negative. */
+  const lessFixedBreak = (spanHours: number): number =>
+    round2(spanHours > breakHours ? spanHours - breakHours : spanHours);
+
+  /*
+   * (0) An explicit hours override beats everything — including a manual time correction.
+   * It is the escape hatch for a day the rules get wrong, so nothing below may second-guess
+   * it. Checked with `typeof` rather than truthiness because 0 is a legitimate override.
+   */
+  if (typeof record.overrideHours === 'number' && Number.isFinite(record.overrideHours)) {
+    return round2(Math.max(0, record.overrideHours));
+  }
 
   // (1) A hand-corrected day is the admin's word against the device's. The admin wins.
-  if (record.manuallyEdited) return spanMinusFixedBreak();
+  if (record.manuallyEdited) {
+    if (!record.checkIn || !record.checkOut) return 0;
+    return lessFixedBreak(record.hoursWorked || hoursBetween(record.checkIn, record.checkOut));
+  }
 
-  const minPunchGap = settings.minPunchGapMinutes ?? DEFAULT_ATTENDANCE_SETTINGS.minPunchGapMinutes;
+  const minPunchGap =
+    settings.minPunchGapMinutes ?? DEFAULT_ATTENDANCE_SETTINGS.minPunchGapMinutes;
   const minBreak = settings.minBreakMinutes ?? DEFAULT_ATTENDANCE_SETTINGS.minBreakMinutes;
   const punches = dedupePunches(record.punches || [], minPunchGap);
 
-  if (punches.length >= 3) {
-    // (2) + (3) Pay the whole span, less each stretch spent away from the shop.
-    const spanMinutes = minutesBetween(punches[0], punches[punches.length - 1]);
+  if (punches.length >= 2) {
+    const spanHours = minutesBetween(punches[0], punches[punches.length - 1]) / 60;
+
+    /*
+     * Odd means a punch is missing, so the in/out pairing below would be reading the gaps
+     * backwards. Fall back rather than guess.
+     *
+     * The span is taken from the DE-DUPLICATED punches, not from `record.hoursWorked` —
+     * that stored figure is first-to-last of the raw presses, so a stray press two minutes
+     * after clocking off would otherwise still stretch the day.
+     */
+    if (punches.length % 2 === 1) return lessFixedBreak(spanHours);
+
+    // (3) Two punches is one unbroken stretch with no lunch punched, so the standard break
+    // comes off. Four or more, and the real absences are visible and used exactly.
+    if (punches.length === 2) return lessFixedBreak(spanHours);
 
     let awayMinutes = 0;
     // Odd-indexed gaps are out→in. Even-indexed ones are time actually worked.
@@ -156,11 +184,12 @@ export function paidHoursForDay(
       if (gap >= minBreak) awayMinutes += gap;
     }
 
-    return round2(Math.max(0, spanMinutes - awayMinutes) / 60);
+    return round2(Math.max(0, spanHours * 60 - awayMinutes) / 60);
   }
 
-  // (4) Two punches (or one, after de-duplication) — no lunch punch to work from.
-  return spanMinusFixedBreak();
+  // A single punch: clocked in and never out. Nothing is guessed.
+  if (!record.checkIn || !record.checkOut) return 0;
+  return lessFixedBreak(record.hoursWorked || hoursBetween(record.checkIn, record.checkOut));
 }
 
 /** Minutes between two 'HH:mm' times, as decimal hours. Returns 0 if either is missing. */

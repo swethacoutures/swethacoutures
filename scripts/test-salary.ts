@@ -135,6 +135,113 @@ section('Punching out for lunch — the real gap is used, not an estimate');
 
 /* --------------------------------------------------------------- working days */
 
+section('Pressing the finger several times by mistake');
+{
+  /*
+   * The two questions the shop actually asked. Both are answered here rather than in prose,
+   * so the answers cannot quietly stop being true.
+   */
+
+  // Somebody jabs the sensor four times in ten seconds on the way in, then leaves at six.
+  check(
+    'four presses in a few seconds count as one arrival',
+    paidHoursForDay(day('2026-08-03', '09:00', '09:00', '09:00', '09:01', '18:00'), SETTINGS) === 8,
+    String(paidHoursForDay(day('2026-08-03', '09:00', '09:00', '09:00', '09:01', '18:00'), SETTINGS)));
+
+  // The same thing on the way out.
+  check(
+    'repeated presses on the way out do not shorten the day',
+    paidHoursForDay(day('2026-08-03', '09:00', '18:00', '18:00', '18:02'), SETTINGS) === 8,
+    String(paidHoursForDay(day('2026-08-03', '09:00', '18:00', '18:00', '18:02'), SETTINGS)));
+
+  // The real record from this shop: 16 presses between 17:47 and 19:27, one evening.
+  const jabbed = paidHoursForDay(
+    day('2026-08-10', '17:47', '17:48', '17:53', '17:57', '18:19', '18:20', '18:21', '18:30',
+        '18:34', '18:39', '18:44', '18:52', '18:53', '19:02', '19:20', '19:27'),
+    SETTINGS);
+  check(
+    'a real 16-press evening is not shredded into minutes',
+    jabbed > 1, `got ${jabbed} h from a 1h40 evening`);
+}
+
+section('Arriving, then leaving again shortly after');
+{
+  // In at 09:00, back out at 09:08, gone for the morning, back at 14:00 until 18:00.
+  const inOutBack = paidHoursForDay(
+    day('2026-08-03', '09:00', '09:08', '14:00', '18:00'), SETTINGS);
+  check(
+    'the hours away are not paid',
+    inOutBack === 4.13, String(inOutBack));
+
+  // In at 09:00 and gone for the day at 09:08 — a wasted trip, paid as the 8 minutes it was.
+  const shortVisit = paidHoursForDay(day('2026-08-03', '09:00', '09:08'), SETTINGS);
+  check(
+    'a visit shorter than the break is paid as itself, never negative',
+    shortVisit === 0.13, String(shortVisit));
+
+  /*
+   * Stepping out for three minutes is not a lunch break. Collapsing that pair leaves three
+   * punches — an odd count — so the day falls back to "time on the premises less the
+   * standard break", which is exactly the rule for a day where nobody punched out for
+   * lunch. 8h, not the 3h the old parity reading produced.
+   */
+  check(
+    'a three-minute step outside does not cost the afternoon',
+    paidHoursForDay(day('2026-08-03', '09:00', '12:00', '12:03', '18:00'), SETTINGS) === 8,
+    String(paidHoursForDay(day('2026-08-03', '09:00', '12:00', '12:03', '18:00'), SETTINGS)));
+
+  // Punched in and never out: nothing is guessed, the day reads zero until corrected.
+  check(
+    'forgetting to punch out pays nothing until an admin fixes the day',
+    paidHoursForDay({ checkIn: '09:00', checkOut: '', hoursWorked: 0, punches: ['09:00'] }, SETTINGS) === 0);
+
+  // An admin correction overrides the punches completely.
+  check(
+    "an admin's corrected times win over the raw punches",
+    paidHoursForDay(
+      { checkIn: '09:00', checkOut: '18:00', hoursWorked: 9, manuallyEdited: true,
+        punches: ['09:00', '09:08'] },
+      SETTINGS) === 8,
+    String(paidHoursForDay(
+      { checkIn: '09:00', checkOut: '18:00', hoursWorked: 9, manuallyEdited: true,
+        punches: ['09:00', '09:08'] }, SETTINGS)));
+}
+
+section('The admin can override a day outright');
+{
+  // The escape hatch: whatever the machine says, this day pays what the admin says.
+  check(
+    'an override beats the punches',
+    paidHoursForDay(
+      { checkIn: '09:00', checkOut: '09:08', hoursWorked: 0.13,
+        punches: ['09:00', '09:08'], overrideHours: 8 },
+      SETTINGS) === 8);
+
+  check(
+    'an override beats a manual time correction too',
+    paidHoursForDay(
+      { checkIn: '09:00', checkOut: '18:00', hoursWorked: 9,
+        manuallyEdited: true, overrideHours: 4 },
+      SETTINGS) === 4);
+
+  // Zero is a real decision, not "no override" — a day deliberately paid nothing.
+  check(
+    'an override of zero pays nothing, and is not mistaken for unset',
+    paidHoursForDay(
+      { checkIn: '09:00', checkOut: '18:00', hoursWorked: 9, overrideHours: 0 },
+      SETTINGS) === 0);
+
+  check(
+    'a negative override cannot pay a negative day',
+    paidHoursForDay(
+      { checkIn: '09:00', checkOut: '18:00', hoursWorked: 9, overrideHours: -5 },
+      SETTINGS) === 0);
+
+  check(
+    'no override means the normal rules still apply',
+    paidHoursForDay(day('2026-08-03', '09:00', '18:00'), SETTINGS) === 8);
+}
+
 section('Working days');
 {
   // August 2026: 1st is a Saturday, 31 days, 5 Sundays.
@@ -257,9 +364,19 @@ section('Repeat presses on the sensor');
     paidHoursForDay(day('2026-08-03', '09:00', '09:01', '18:00'), SETTINGS) === 8,
     String(paidHoursForDay(day('2026-08-03', '09:00', '09:01', '18:00'), SETTINGS)));
 
+  /*
+   * With the window off, the stray 09:01 press is kept, the count stays even, and the
+   * pairing reads 09:01→13:00 as time away — the whole morning lost. That is precisely what
+   * the window exists to prevent.
+   */
+  const withWindow = paidHoursForDay(
+    day('2026-08-03', '09:00', '09:01', '13:00', '18:00'), SETTINGS);
+  const withoutWindow = paidHoursForDay(
+    day('2026-08-03', '09:00', '09:01', '13:00', '18:00'),
+    { ...SETTINGS, minPunchGapMinutes: 0 });
   check('de-duplication respects the configured window',
-    paidHoursForDay(day('2026-08-03', '09:00', '09:01', '18:00'),
-      { ...SETTINGS, minPunchGapMinutes: 0 }) !== 8);
+    withWindow === 8 && withoutWindow < 6,
+    `with ${withWindow}, without ${withoutWindow}`);
 }
 
 section('Short absences stay paid, real breaks do not');

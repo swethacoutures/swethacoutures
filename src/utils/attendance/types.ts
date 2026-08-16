@@ -49,6 +49,17 @@ export interface AttendanceRecord {
   source: 'manual' | 'device';
   /** When true, sync will not overwrite checkIn/checkOut. */
   manuallyEdited?: boolean;
+  /**
+   * Paid hours set by hand for this one day, overriding every rule.
+   *
+   * The last resort when the times are right but the resulting hours are not — a day the
+   * shop agreed to pay in full, a machine that recorded something nobody can explain. It
+   * wins over the punches, over the pairing and over the break deduction, because an admin
+   * who has looked at the day knows more than the arithmetic does.
+   *
+   * `undefined` means "no override". Zero is a real value: a day paid nothing on purpose.
+   */
+  overrideHours?: number;
   createdAt?: string;
   updatedAt?: string;
 }

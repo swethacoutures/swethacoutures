@@ -1,4 +1,5 @@
 import React, { useMemo, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -10,7 +11,7 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
-import { Plus, Settings2, Trash2, Fingerprint, Download, Link2 } from 'lucide-react';
+import { Trash2, Fingerprint, Download, Link2, ExternalLink } from 'lucide-react';
 import { toast } from '@/hooks/use-toast';
 import { deleteEmployee } from '@/utils/attendance/attendanceStore';
 import { requestNamesFromDevice } from '@/utils/attendance/deviceStore';
@@ -46,6 +47,7 @@ const EmployeesTab: React.FC<EmployeesTabProps> = ({
   loading,
   onChanged,
 }) => {
+  const navigate = useNavigate();
   const [dialogOpen, setDialogOpen] = useState(false);
   const [fetchingNames, setFetchingNames] = useState(false);
 
@@ -120,11 +122,22 @@ const EmployeesTab: React.FC<EmployeesTabProps> = ({
       {needsSetup.length > 0 && (
         <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 dark:border-amber-900 dark:bg-amber-950/40">
           <p className="text-sm font-semibold text-amber-900 dark:text-amber-200">
-            {needsSetup.length} employee{needsSetup.length === 1 ? '' : 's'} need a salary set
+            {needsSetup.length} device number{needsSetup.length === 1 ? '' : 's'} not connected to an employee yet
           </p>
           <p className="mt-0.5 text-xs text-amber-800 dark:text-amber-300">
-            Until you set a pay basis, they count as ₹0 in payroll. Click the settings icon on their row.
+            Pay is set on the <b>Employees</b> page. Open the employee there and type this
+            device number into <b>Fingerprint device number (S.No)</b> — they will connect
+            automatically. Until then they count as ₹0 in payroll.
           </p>
+          <Button
+            variant="outline"
+            size="sm"
+            className="mt-2"
+            onClick={() => navigate('/employees')}
+          >
+            <ExternalLink className="mr-2 h-4 w-4" />
+            Go to Employees
+          </Button>
         </div>
       )}
 
@@ -144,14 +157,14 @@ const EmployeesTab: React.FC<EmployeesTabProps> = ({
               {fetchingNames ? 'Asking device…' : 'Get names from device'}
             </Button>
           )}
-          <Button
-            onClick={() => {
-              setEditing(null);
-              setDialogOpen(true);
-            }}
-          >
-            <Plus className="mr-2 h-4 w-4" />
-            Add employee
+          {/*
+            No "Add employee" here on purpose. A person arrives on this list one of two
+            ways: they punch, or an admin types their device number on the Employees page.
+            A third way to create one is a third place for the two lists to drift apart.
+          */}
+          <Button variant="outline" onClick={() => navigate('/employees')}>
+            <ExternalLink className="mr-2 h-4 w-4" />
+            Set pay on Employees
           </Button>
         </div>
       </div>
@@ -220,9 +233,11 @@ const EmployeesTab: React.FC<EmployeesTabProps> = ({
                           </div>
                         </TableCell>
                         <TableCell>
+                          {/* Read-only: mirrored from the employee's record on the
+                              Employees page, which is the only place it can be changed. */}
                           {unset ? (
                             <Badge variant="outline" className="border-amber-300 bg-amber-50 text-amber-700 dark:bg-amber-950/50 dark:text-amber-300">
-                              Needs setup
+                              Not connected
                             </Badge>
                           ) : (
                             MODE_LABEL[employee.salaryMode!]
@@ -244,12 +259,13 @@ const EmployeesTab: React.FC<EmployeesTabProps> = ({
                             <Button
                               size="sm"
                               variant="ghost"
+                              title="Connect this device number to an employee"
                               onClick={() => {
                                 setEditing(employee);
                                 setDialogOpen(true);
                               }}
                             >
-                              <Settings2 className="h-4 w-4" />
+                              <Link2 className="h-4 w-4" />
                             </Button>
                             <Button
                               size="sm"

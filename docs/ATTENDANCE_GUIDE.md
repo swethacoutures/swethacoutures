@@ -125,12 +125,13 @@ Anything the device sent while it was waiting is backfilled at that moment — n
 > the address could invent attendance for your shop. Punches from an unapproved device are
 > stored but kept out of payroll until you vouch for it.
 
-### Step 3 — Let the employees appear
+### Step 3 — They appear by themselves
 
-The first time someone punches, they appear automatically on **Attendance → Employees** with
-their device ID as their name (e.g. an employee called `1`).
+The first time someone punches, they appear on **Attendance → Employees** with their device
+number as their name (e.g. an employee called `1`).
 
-You do not have to create them by hand.
+You never create them by hand there. If you already typed their S.No on the Employees page,
+they arrive already connected and already on the right pay.
 
 ### Step 4 — Give them real names
 
@@ -142,7 +143,7 @@ Two ways:
 
 ### Step 5 — Set how each person is paid
 
-**Attendance → Employees → click the employee.**
+**Employees → Add Employee (or Edit).** This is the *only* place pay is decided.
 
 | Pay basis | Meaning |
 |---|---|
@@ -150,8 +151,21 @@ Two ways:
 | **Daily wage** | A flat amount for each day they check in |
 | **Rate per hour** | Rate × the hours actually worked |
 
-Until this is set, the person shows **"Needs setup"** in Payroll and contributes ₹0. That is
-deliberate — it is better than silently paying nothing.
+Also on that same form:
+
+- **Standard hours per day** — a full working day for this person. It is the divisor behind
+  their hourly rate: monthly salary ÷ (working days × these hours).
+- **Fingerprint device number (S.No)** — the User ID you gave them on the machine in Step 1.
+  **This is what connects the two sides.** Type it and their punches count towards this
+  record automatically. You can set it before they have ever punched.
+
+Until a pay basis is set, the person shows **"Needs setup"** in Payroll and contributes ₹0.
+That is deliberate — better than silently paying nothing.
+
+> **Attendance → Employees has nothing to fill in.** It is a read-out of who the device has
+> seen and which employee record they belong to. The only control there is an optional
+> "connect this device number to an employee", for the rare case where the number was not
+> typed on the Employees page. Everything else is decided once, on Employees.
 
 ### Step 6 — Set the shop's working rules
 
@@ -212,6 +226,66 @@ So:
 puts it back, and leaves a note showing what was undone. Nothing is ever silently rewritten.
 
 Export the whole month to Excel with **Export Excel**.
+
+---
+
+## 5a. Two things that will definitely happen
+
+### Somebody presses their finger several times by mistake
+
+**Nothing goes wrong.** Presses close together are treated as one.
+
+Anything within **5 minutes** of the press before it is ignored (you can change the window in
+Payroll → Working rules). So four jabs at the sensor on the way in is one arrival, and a
+double press on the way out does not extend the day.
+
+This is not theoretical — one real evening on your device had **16 presses between 17:47 and
+19:27**. Before this rule that day was read as eight tiny shifts worth about 20 minutes; now
+it reads as the evening it actually was.
+
+### Somebody arrives and then leaves again after 5–10 minutes
+
+**They are paid for the time they were actually here, and not for the time they were away.**
+
+| What happened | What they are paid |
+|---|---|
+| In 09:00, out 09:08, back 14:00, out 18:00 | **4.13 h** — the 4h52m away is not paid |
+| In 09:00, out 09:08, and that is the whole day | **8 minutes** (never negative) |
+| In 09:00, stepped out 12:00–12:03, out 18:00 | **8 h** — a 3-minute step is not a break |
+| In 09:00 and never punched out | **0 h** until an admin corrects the day |
+
+The line between "stepped out" and "went away" is **20 minutes**, also configurable in
+Working rules. Below it, the time stays paid; at or above it, it comes off.
+
+The last row matters: a forgotten punch-out is never guessed at. The day shows as incomplete
+and pays nothing until someone fixes it on **Records** — and a day fixed by hand can never be
+overwritten by the device again.
+
+---
+
+## 5b. Nothing is locked — the admin can fix anything
+
+Every number the machine produces can be corrected by hand, and every correction is recorded
+with who did it and when (**Attendance → Activity**).
+
+| To fix | Where | What happens |
+|---|---|---|
+| Wrong check-in / check-out | Records → ✏️ on the row | Your times replace the machine's, permanently — the device can never overwrite a day you have corrected |
+| Somebody missing entirely | Records → **Add** | Pick the person, the date, and the times |
+| A day that should not exist | Records → 🗑 on the row | Removed |
+| A whole month of junk | Records → **Delete all** | Scoped to what is on screen or the whole period, and it asks you to type DELETE |
+| A stray duplicate press | Punches → 🗑 | Removes just that press |
+| **The hours are simply wrong** | Records → ✏️ → **Set the paid hours myself** | You type the paid hours for that day and they beat every rule |
+| Paid the wrong person / amount | Payroll → **Undo** | Reverses it, and says so on the row |
+| Wrong pay rate | Employees → Edit | Applies everywhere, including past months not yet paid |
+
+**The edit dialog now shows two numbers**: *time on the premises* and *paid hours* (after the
+break). Those are not the same figure, and the second one is what becomes money — so you can
+see the effect of a correction before you save it.
+
+The **"Set the paid hours myself"** switch is the final word. Use it for a day the rules get
+wrong: a full day you agreed to pay despite what the machine recorded, or a half day off.
+The row then shows a "Paid 8 hrs" badge so nobody wonders later why that day is different.
 
 ---
 

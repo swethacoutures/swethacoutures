@@ -21,7 +21,11 @@ import {
 import { Pencil, Plus, Trash2, Search, LogIn, LogOut, Clock } from 'lucide-react';
 import { toast } from '@/hooks/use-toast';
 import { deleteRecord, deleteRecords } from '@/utils/attendance/attendanceStore';
-import type { AttendanceEmployee, AttendanceRecord } from '@/utils/attendance/types';
+import type {
+  AttendanceEmployee,
+  AttendanceRecord,
+  AttendanceSettings,
+} from '@/utils/attendance/types';
 import RecordEditDialog from './RecordEditDialog';
 import BulkDeleteDialog, { type DeleteScope } from './BulkDeleteDialog';
 
@@ -32,6 +36,8 @@ interface AttendanceRecordsTabProps {
   onChanged: () => void;
   /** The range these records were loaded for, named for the delete confirmation. */
   periodLabel: string;
+  /** Shop rules, so the edit dialog can preview what a day will pay. */
+  settings: AttendanceSettings;
 }
 
 /** '2026-08-06' -> '06 Aug 2026' */
@@ -51,6 +57,7 @@ const AttendanceRecordsTab: React.FC<AttendanceRecordsTabProps> = ({
   loading,
   onChanged,
   periodLabel,
+  settings,
 }) => {
   const [search, setSearch] = useState('');
   const [employeeFilter, setEmployeeFilter] = useState('all');
@@ -252,6 +259,17 @@ const AttendanceRecordsTab: React.FC<AttendanceRecordsTabProps> = ({
                           {record.manuallyEdited && (
                             <Badge variant="outline" className="text-xs">Manual</Badge>
                           )}
+                          {/* An override changes the money, so it says so on the row rather
+                              than hiding inside the edit dialog. */}
+                          {typeof record.overrideHours === 'number' && (
+                            <Badge
+                              variant="outline"
+                              className="border-amber-300 bg-amber-50 text-xs text-amber-700 dark:bg-amber-950/50 dark:text-amber-300"
+                              title="Paid hours were set by hand for this day"
+                            >
+                              Paid {record.overrideHours} hrs
+                            </Badge>
+                          )}
                         </div>
                       </TableCell>
                       <TableCell className="text-right">
@@ -286,6 +304,7 @@ const AttendanceRecordsTab: React.FC<AttendanceRecordsTabProps> = ({
       </Card>
 
       <RecordEditDialog
+        settings={settings}
         open={dialogOpen}
         onOpenChange={setDialogOpen}
         record={editing}

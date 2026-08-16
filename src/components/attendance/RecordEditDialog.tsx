@@ -19,9 +19,14 @@ import {
 } from '@/components/ui/select';
 import { toast } from '@/hooks/use-toast';
 import { saveRecordManually } from '@/utils/attendance/attendanceStore';
-import { hoursBetween } from '@/utils/attendance/salaryCalc';
+import { hoursBetween, paidHoursForDay } from '@/utils/attendance/salaryCalc';
 import { todayKey } from '@/utils/attendance/punchFolding';
-import type { AttendanceEmployee, AttendanceRecord } from '@/utils/attendance/types';
+import { Switch } from '@/components/ui/switch';
+import type {
+  AttendanceEmployee,
+  AttendanceRecord,
+  AttendanceSettings,
+} from '@/utils/attendance/types';
 
 interface RecordEditDialogProps {
   open: boolean;
@@ -30,6 +35,8 @@ interface RecordEditDialogProps {
   record: AttendanceRecord | null;
   employees: AttendanceEmployee[];
   onSaved: () => void;
+  /** The shop's rules, so the dialog can show what this day will actually pay. */
+  settings: AttendanceSettings;
 }
 
 /**
@@ -44,6 +51,7 @@ const RecordEditDialog: React.FC<RecordEditDialogProps> = ({
   record,
   employees,
   onSaved,
+  settings,
 }) => {
   const isNew = !record;
   const [saving, setSaving] = useState(false);
@@ -51,6 +59,8 @@ const RecordEditDialog: React.FC<RecordEditDialogProps> = ({
   const [date, setDate] = useState(todayKey());
   const [checkIn, setCheckIn] = useState('');
   const [checkOut, setCheckOut] = useState('');
+  const [overriding, setOverriding] = useState(false);
+  const [overrideHours, setOverrideHours] = useState('');
 
   useEffect(() => {
     if (!open) return;
@@ -58,9 +68,31 @@ const RecordEditDialog: React.FC<RecordEditDialogProps> = ({
     setDate(record?.date || todayKey());
     setCheckIn(record?.checkIn || '');
     setCheckOut(record?.checkOut || '');
+    const existing = record?.overrideHours;
+    setOverriding(typeof existing === 'number');
+    setOverrideHours(typeof existing === 'number' ? String(existing) : '');
   }, [open, record, employees]);
 
   const previewHours = hoursBetween(checkIn, checkOut);
+
+  /**
+   * What this day will actually be paid, under the shop's current rules.
+   *
+   * Shown live because the times and the paid hours are not the same number — the break
+   * comes off, and on a day with punches the real gaps do too. Without this the admin fixes
+   * a check-out, sees "9 hrs", and is surprised by 8 on the payslip.
+   */
+  const paidPreview = paidHoursForDay(
+    {
+      checkIn,
+      checkOut,
+      hoursWorked: previewHours,
+      punches: record?.punches,
+      manuallyEdited: true,
+      overrideHours: overriding ? Number(overrideHours) || 0 : undefined,
+    },
+    settings
+  );
 
   const handleSave = async () => {
     if (!empCode) {
@@ -86,6 +118,8 @@ const RecordEditDialog: React.FC<RecordEditDialogProps> = ({
         date,
         checkIn,
         checkOut: checkOut || undefined,
+        // null clears a previous override; undefined would be ignored by the merge write.
+        overrideHours: overriding ? Number(overrideHours) || 0 : null,
       });
       toast({ title: isNew ? 'Attendance added' : 'Attendance updated' });
       onSaved();
@@ -166,11 +200,59 @@ const RecordEditDialog: React.FC<RecordEditDialogProps> = ({
             </div>
           </div>
 
-          <div className="rounded-lg bg-gray-50 p-3 text-sm dark:bg-gray-900/60">
-            <span className="text-gray-600 dark:text-gray-400">Hours worked: </span>
-            <span className="font-semibold text-gray-900 dark:text-gray-100">
-              {checkOut ? `${previewHours} hrs` : 'Not checked out yet'}
-            </span>
+          <div className="space-y-3 rounded-lg bg-gray-50 p-3 text-sm dark:bg-gray-900/60">
+            <div className="flex items-center justify-between">
+              <span className="text-gray-600 dark:text-gray-400">Time on the premises</span>
+              <span className="font-semibold text-gray-900 dark:text-gray-100">
+                {checkOut ? `${previewHours} hrs` : 'Not checked out yet'}
+              </span>
+            </div>
+            <div className="flex items-center justify-between border-t border-gray-200 pt-2 dark:border-gray-700">
+              <span className="text-gray-600 dark:text-gray-400">
+                Paid hours <span className="text-xs">(after the break)</span>
+              </span>
+              <span className="font-semibold text-green-700 dark:text-green-400">
+                {paidPreview} hrs
+              </span>
+            </div>
+          </div>
+
+          {/* The escape hatch. Everything above is a rule; this is the admin's judgement,
+              and it beats every rule for this one day. */}
+          <div className="space-y-2 rounded-lg border p-3">
+            <div className="flex items-center justify-between gap-3">
+              <div className="min-w-0">
+                <Label htmlFor="override" className="cursor-pointer">
+                  Set the paid hours myself
+                </Label>
+                <p className="mt-0.5 text-xs text-gray-500">
+                  For a day the rules get wrong — a full day agreed despite the punches, or a
+                  half day off. Overrides everything above.
+                </p>
+              </div>
+              <Switch id="override" checked={overriding} onCheckedChange={setOverriding} />
+            </div>
+
+            {overriding && (
+              <div className="space-y-1 pt-1">
+                <Label htmlFor="overrideHours">Paid hours for this day</Label>
+                <Input
+                  id="overrideHours"
+                  type="number"
+                  inputMode="decimal"
+                  min="0"
+                  max="24"
+                  step="0.25"
+                  value={overrideHours}
+                  onChange={(event) => setOverrideHours(event.target.value)}
+                  placeholder="e.g. 8"
+                />
+                <p className="text-xs text-amber-700 dark:text-amber-400">
+                  This day will pay {Number(overrideHours) || 0} hrs whatever the machine
+                  recorded. Recorded in the activity log.
+                </p>
+              </div>
+            )}
           </div>
         </div>
 

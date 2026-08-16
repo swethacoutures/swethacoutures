@@ -8,6 +8,7 @@
  */
 import {
   collection,
+  deleteField,
   doc,
   getDoc,
   getDocs,
@@ -217,6 +218,8 @@ export async function saveRecordManually(input: {
   date: string;
   checkIn?: string;
   checkOut?: string;
+  /** Paid hours set by hand. `null` clears a previous override. */
+  overrideHours?: number | null;
 }): Promise<void> {
   const id = recordId(input.empCode, input.date);
   const hoursWorked = hoursBetween(input.checkIn, input.checkOut);
@@ -236,6 +239,15 @@ export async function saveRecordManually(input: {
       status: input.checkOut ? 'present' : 'incomplete',
       source: 'manual',
       manuallyEdited: true,
+      /*
+       * `deleteField()` rather than undefined: a merge write ignores undefined, so clearing
+       * an override by passing undefined would silently leave the old one in place and keep
+       * paying it.
+       */
+      overrideHours:
+        input.overrideHours === null || input.overrideHours === undefined
+          ? deleteField()
+          : input.overrideHours,
       updatedAt: nowIso(),
     },
     { merge: true }

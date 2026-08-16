@@ -50,6 +50,8 @@ interface StaffMember {
   bonus?: number;
   /** Fingerprint employee code this person's attendance records belong to. */
   attendanceEmpCode?: string;
+  /** Paid hours in a normal working day — the divisor behind their hourly rate. */
+  standardHoursPerDay?: number;
   emergencyContact?: {
     name: string;
     phone: string;
@@ -129,6 +131,7 @@ const Staff = () => {
     salaryMode: 'monthly' as 'monthly' | 'hourly' | 'daily',
     bonus: '',
     attendanceEmpCode: '',
+    standardHoursPerDay: '8',
     emergencyContactName: '',
     emergencyContactPhone: '',
     emergencyContactRelation: ''
@@ -380,7 +383,10 @@ const Staff = () => {
         salaryMode: formData.salaryMode || 'monthly',
         paidSalary: rate,
         bonus: formData.bonus ? parseFloat(formData.bonus) : 0,
-        ...(formData.attendanceEmpCode ? { attendanceEmpCode: formData.attendanceEmpCode } : {}),
+        ...(formData.attendanceEmpCode.trim()
+          ? { attendanceEmpCode: formData.attendanceEmpCode.trim() }
+          : {}),
+        standardHoursPerDay: parseFloat(formData.standardHoursPerDay) || 8,
         status: 'active' as const,
         ...(editingStaff ? {} : {
           joinDate: serverTimestamp(),
@@ -403,25 +409,45 @@ const Staff = () => {
         password
       };
 
-      if (editingStaff) {
-        await updateDoc(doc(db, 'staff', editingStaff.id), staffData);
-        // Push the pay basis onto the linked fingerprint employee so Payroll and this
-        // page always quote the same rate.
+      /**
+       * The Employees page is the single place pay is decided, so every save mirrors it onto
+       * the attendance side — creating the fingerprint employee under the typed device
+       * number if one does not exist yet. That is what lets an admin set somebody up on
+       * their first morning, before they have ever touched the machine, and still have
+       * their very first punch count.
+       */
+      const mirrorToAttendance = async (staffId: string) => {
         try {
           await syncPayToAttendance(
             {
-              id: editingStaff.id,
+              id: staffId,
               name: formData.name,
               salaryMode: formData.salaryMode,
               salaryAmount: rate,
               bonus: staffData.bonus,
-              attendanceEmpCode: formData.attendanceEmpCode || editingStaff.attendanceEmpCode,
+              standardHoursPerDay: staffData.standardHoursPerDay,
+              attendanceEmpCode:
+                formData.attendanceEmpCode.trim() || editingStaff?.attendanceEmpCode,
             },
             attendanceEmployees
           );
         } catch (syncError) {
+          // The employee is saved either way; a failed mirror must not lose the record. It
+          // is surfaced rather than swallowed, because silently unlinked attendance is the
+          // kind of problem that is only noticed on payday.
           console.error('Could not sync pay to attendance:', syncError);
+          toast({
+            title: 'Saved, but attendance was not linked',
+            description:
+              syncError instanceof Error ? syncError.message : 'Check the device number.',
+            variant: 'destructive',
+          });
         }
+      };
+
+      if (editingStaff) {
+        await updateDoc(doc(db, 'staff', editingStaff.id), staffData);
+        await mirrorToAttendance(editingStaff.id);
         toast({
           title: "Success",
           description: "Employee updated successfully",
@@ -449,30 +475,7 @@ const Staff = () => {
         }
 
         const created = await addDoc(collection(db, 'staff'), staffData);
-
-        /**
-         * Link the new employee to their fingerprint records straight away.
-         *
-         * This only ran on edit before, so an employee added with a fingerprint employee
-         * selected was saved with the code but never joined up on the attendance side —
-         * their payable salary showed as "No attendance record linked" until someone
-         * happened to open the form again and press Save a second time.
-         */
-        try {
-          await syncPayToAttendance(
-            {
-              id: created.id,
-              name: formData.name,
-              salaryMode: formData.salaryMode,
-              salaryAmount: rate,
-              bonus: staffData.bonus,
-              attendanceEmpCode: formData.attendanceEmpCode,
-            },
-            attendanceEmployees
-          );
-        } catch (syncError) {
-          console.error('Could not sync pay to attendance:', syncError);
-        }
+        await mirrorToAttendance(created.id);
 
         toast({
           title: "Success",
@@ -514,6 +517,7 @@ const Staff = () => {
       salaryMode: 'monthly',
       bonus: '',
       attendanceEmpCode: '',
+      standardHoursPerDay: '8',
       emergencyContactName: '',
       emergencyContactPhone: '',
       emergencyContactRelation: ''
@@ -540,6 +544,7 @@ const Staff = () => {
       salaryMode: member.salaryMode || 'monthly',
       bonus: member.bonus?.toString() || '',
       attendanceEmpCode: member.attendanceEmpCode || '',
+      standardHoursPerDay: (member.standardHoursPerDay ?? 8).toString(),
       emergencyContactName: member.emergencyContact?.name || '',
       emergencyContactPhone: member.emergencyContact?.phone || '',
       emergencyContactRelation: member.emergencyContact?.relation || ''
@@ -854,31 +859,57 @@ const Staff = () => {
                     />
                   </div>
                   <div>
-                    <Label htmlFor="attendanceEmpCode">Fingerprint employee</Label>
-                    <Select
-                      value={formData.attendanceEmpCode || 'auto'}
-                      onValueChange={(value) =>
-                        setFormData({ ...formData, attendanceEmpCode: value === 'auto' ? '' : value })
+                    <Label htmlFor="standardHoursPerDay">Standard hours per day *</Label>
+                    <NumberInput
+                      id="standardHoursPerDay"
+                      value={formData.standardHoursPerDay ? Number(formData.standardHoursPerDay) : ''}
+                      onChange={(value) =>
+                        setFormData({ ...formData, standardHoursPerDay: value?.toString() || '8' })
                       }
-                    >
-                      <SelectTrigger id="attendanceEmpCode">
-                        <SelectValue placeholder="Match by name" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="auto">Match automatically by name</SelectItem>
-                        {attendanceEmployees.map((employee) => (
-                          <SelectItem key={employee.empCode} value={employee.empCode}>
-                            {employee.name} (code {employee.empCode})
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
+                      min={1}
+                      max={24}
+                      step={0.5}
+                      decimals={1}
+                      allowEmpty={false}
+                      emptyValue={8}
+                      placeholder="8"
+                    />
                     <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
-                      Links this employee to their fingerprint records so payable salary is
-                      calculated from real check-in / check-out times.
+                      A full working day for this person. It is the divisor behind their hourly
+                      rate: monthly salary ÷ (working days × these hours).
                     </p>
                   </div>
                 </div>
+
+                <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                  <div>
+                    <Label htmlFor="attendanceEmpCode">
+                      Fingerprint device number (S.No)
+                    </Label>
+                    <Input
+                      id="attendanceEmpCode"
+                      value={formData.attendanceEmpCode}
+                      onChange={(e) =>
+                        setFormData({ ...formData, attendanceEmpCode: e.target.value.trim() })
+                      }
+                      placeholder="e.g. 1"
+                      inputMode="numeric"
+                    />
+                    <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                      The <b>User ID</b> you gave this person on the fingerprint machine. Type it
+                      here and their attendance connects to this record automatically — you can
+                      set it before they have ever punched. Leave it blank and we will match on
+                      the name instead.
+                    </p>
+                    {formData.attendanceEmpCode && (
+                      <p className="mt-1 text-xs font-medium text-green-700 dark:text-green-400">
+                        Punches from device number {formData.attendanceEmpCode} will count towards
+                        this employee.
+                      </p>
+                    )}
+                  </div>
+                </div>
+
               </div>
 
               {/* Payment details */}
