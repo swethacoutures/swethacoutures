@@ -379,6 +379,12 @@ export interface DeviceState {
   status: string;
   punchCount: number;
   isNew: boolean;
+  /**
+   * When the server last pushed the clock to this device. Carried on the returned state so
+   * the command poll can decide whether another sync is due without a second read — leaving
+   * it off meant the check saw `undefined` every time and re-sent the command on every poll.
+   */
+  lastClockSyncAt?: string;
 }
 
 /**
@@ -429,6 +435,7 @@ export async function touchDevice(
     status: String(existing.status || 'pending'),
     punchCount: Number(existing.punchCount || 0),
     isNew: false,
+    lastClockSyncAt: existing.lastClockSyncAt ? String(existing.lastClockSyncAt) : undefined,
   };
 }
 
@@ -786,6 +793,50 @@ interface QueuedCommand {
   queuedAt: string;
 }
 
+/**
+ * How often the server re-sends the clock, in milliseconds.
+ *
+ * The terminal's real-time clock drifts by a few seconds a day and loses the time entirely
+ * whenever it is unplugged long enough to flatten its coin cell. Six hours is often enough
+ * that nobody ever sees a wrong time, and rare enough that it costs one extra command a day.
+ */
+export const CLOCK_SYNC_INTERVAL_MS = 6 * 60 * 60 * 1000;
+
+/**
+ * ZKTeco's date-time encoding.
+ *
+ * The terminal does not accept an ISO string or a Unix timestamp. `SET OPTION DateTime=`
+ * wants a single integer in ZKTeco's own scheme, where every month is treated as 31 days
+ * long — so the value is not seconds since an epoch and cannot be produced by date maths.
+ * The formula is fixed by the firmware; do not "correct" the 31.
+ */
+export function encodeDeviceTime(local: Date): number {
+  const days =
+    (local.getUTCFullYear() - 2000) * 12 * 31 +
+    local.getUTCMonth() * 31 +
+    (local.getUTCDate() - 1);
+
+  return (
+    days * 24 * 60 * 60 +
+    local.getUTCHours() * 60 * 60 +
+    local.getUTCMinutes() * 60 +
+    local.getUTCSeconds()
+  );
+}
+
+/**
+ * The command that sets the terminal's clock to the shop's wall-clock time.
+ *
+ * `now` is a real instant; the shop's local time is that instant shifted by the configured
+ * offset. The shifted Date is then read with its **UTC** getters, which is what makes the
+ * arithmetic independent of whatever timezone the server happens to run in — Vercel is UTC,
+ * a laptop in Kakinada is not, and both must produce the same answer.
+ */
+export function buildClockSyncCommand(now: Date, config: IngestConfig): string {
+  const local = new Date(now.getTime() + config.timezoneOffsetMinutes * 60 * 1000);
+  return `SET OPTION DateTime=${encodeDeviceTime(local)}`;
+}
+
 /** Reads and clears the queue, returning the ADMS-formatted command lines. */
 export async function takePendingCommands(
   store: DocStore,
@@ -990,6 +1041,27 @@ export async function handleDeviceRequest(
       // Only approved devices are ever driven — a queued command to an unapproved
       // terminal would be us acting on a device we have not yet vouched for.
       const commands = approved ? await takePendingCommands(store, serialNumber) : [];
+
+      /**
+       * Keep the terminal's clock right, from here.
+       *
+       * The K40's own clock drifts and resets, and setting it by hand on the keypad does
+       * not stick — which is exactly what it looks like from the shop floor: you fix the
+       * time, and a while later it is wrong again. A punch is only ever as good as the
+       * clock that stamped it, so the server (which knows the real time) pushes it rather
+       * than trusting the device to keep it. Sent on the command poll because that is the
+       * one request the device makes constantly whether or not anyone is punching.
+       */
+      if (approved) {
+        const lastSync = Date.parse(String(device.lastClockSyncAt || '')) || 0;
+        if (Date.now() - lastSync >= CLOCK_SYNC_INTERVAL_MS) {
+          commands.push(`C:clock${Date.now().toString().slice(-8)}:${buildClockSyncCommand(new Date(), config)}`);
+          await store.set(COLLECTIONS.devices, safeId(serialNumber), {
+            lastClockSyncAt: nowIso(),
+            updatedAt: nowIso(),
+          });
+        }
+      }
       if (commands.length > 0) {
         return {
           status: 200,

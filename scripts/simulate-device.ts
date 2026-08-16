@@ -314,8 +314,29 @@ try {
   /* ---------------------------------------------------- 8. command polls */
   section('8. Command polling and connection test');
   {
-    const poll = await device.poll();
-    check('getrequest returns exactly "OK" when nothing is queued', poll.body === 'OK', JSON.stringify(poll.body));
+    /*
+     * The first poll after approval carries the clock. The terminal's own RTC drifts and
+     * resets, and setting it on the keypad does not stick, so the server pushes the time
+     * rather than trusting the device to keep it.
+     */
+    const firstPoll = await device.poll();
+    check(
+      'the first command poll pushes the clock',
+      /^C:clock\d+:SET OPTION DateTime=\d+$/m.test(firstPoll.body.trim()),
+      JSON.stringify(firstPoll.body)
+    );
+
+    const encoded = Number(/DateTime=(\d+)/.exec(firstPoll.body)?.[1]);
+    check('the pushed time is a plausible ZKTeco stamp', encoded > 800_000_000 && encoded < 1_000_000_000, encoded);
+
+    // And it must not be re-sent on every poll — that is a command every ~16 seconds.
+    const secondPoll = await device.poll();
+    check(
+      'a later poll returns plain OK, not the clock again',
+      secondPoll.body === 'OK',
+      JSON.stringify(secondPoll.body)
+    );
+
     const test = await device.test();
     check('the connection test passes', test.status === 200 && test.body === 'OK');
   }

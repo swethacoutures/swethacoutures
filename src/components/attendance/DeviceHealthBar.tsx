@@ -5,13 +5,19 @@ import {
   AlertTriangle,
   Ban,
   CheckCircle2,
+  Clock,
   Fingerprint,
   ShieldQuestion,
   WifiOff,
 } from 'lucide-react';
 import { toast } from '@/hooks/use-toast';
 import { useAuth } from '@/contexts/AuthContext';
-import { approveDevice, blockDevice, summariseDeviceHealth } from '@/utils/attendance/deviceStore';
+import {
+  approveDevice,
+  blockDevice,
+  requestClockSync,
+  summariseDeviceHealth,
+} from '@/utils/attendance/deviceStore';
 import type { AttendanceDevice } from '@/utils/attendance/types';
 
 interface DeviceHealthBarProps {
@@ -77,6 +83,33 @@ const DeviceHealthBar: React.FC<DeviceHealthBarProps> = ({ devices, loading, onC
     } catch (error) {
       toast({
         title: 'Could not approve the device',
+        description: error instanceof Error ? error.message : 'Unknown error',
+        variant: 'destructive',
+      });
+    } finally {
+      setBusySn(null);
+    }
+  };
+
+  /**
+   * Push the correct time to the terminal on its next poll.
+   *
+   * The server already does this automatically every few hours; this is for when someone is
+   * standing in front of a wrong clock and wants it fixed now — usually after a power cut.
+   */
+  const handleClockSync = async (device: AttendanceDevice) => {
+    setBusySn(device.sn);
+    try {
+      await requestClockSync(device.sn);
+      toast({
+        title: 'Clock sync queued',
+        description:
+          'The device sets itself from the server on its next check-in, usually within a minute.',
+      });
+      onChanged?.();
+    } catch (error) {
+      toast({
+        title: 'Could not queue the clock sync',
         description: error instanceof Error ? error.message : 'Unknown error',
         variant: 'destructive',
       });
@@ -212,6 +245,26 @@ const DeviceHealthBar: React.FC<DeviceHealthBarProps> = ({ devices, loading, onC
             </p>
           )}
         </div>
+
+        {/*
+          Fix the clock now.
+          The server re-sends the time every few hours by itself, so this is only for when
+          someone is looking at a wrong clock and does not want to wait — a punch is worth
+          exactly as much as the clock that stamped it.
+        */}
+        {summary.device && summary.device.status === 'approved' && (
+          <Button
+            variant="outline"
+            size="sm"
+            className="ml-auto shrink-0"
+            disabled={busySn === summary.device.sn}
+            onClick={() => handleClockSync(summary.device!)}
+            title="Set the device's date and time from the server on its next check-in"
+          >
+            <Clock className="mr-1.5 h-3.5 w-3.5" />
+            {busySn === summary.device.sn ? 'Syncing…' : 'Sync clock'}
+          </Button>
+        )}
       </div>
 
       {summary.pending.map((device) => (

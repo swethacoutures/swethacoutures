@@ -274,6 +274,35 @@ export async function requestNamesFromDevice(sn: string, pins: string[]): Promis
   return pending.length;
 }
 
+/**
+ * Sets the terminal's clock to the correct local time, now.
+ *
+ * The server pushes the clock automatically every few hours (see `_deviceIngest.ts`), which
+ * is what stops it drifting. This is the "do it now" button for the case where someone is
+ * standing at the machine watching a wrong time and does not want to wait — typically right
+ * after a power cut has flattened the device's coin cell and reset its clock.
+ *
+ * Clearing `lastClockSyncAt` is what arms it: the command poll re-sends the time whenever
+ * that stamp is missing or stale, so this makes the very next poll (within ~30 seconds)
+ * carry a fresh one. Queuing the command here instead would mean computing ZKTeco's
+ * date-time encoding in the browser, against the admin's clock rather than the server's —
+ * and the admin's laptop is exactly the clock we are trying not to trust.
+ */
+export async function requestClockSync(sn: string): Promise<void> {
+  await setDoc(
+    doc(db, DEVICES_COLLECTION, sn),
+    { lastClockSyncAt: '', updatedAt: new Date().toISOString() },
+    { merge: true }
+  );
+
+  await logActivity({
+    action: 'edit',
+    entity: 'device',
+    entityId: sn,
+    summary: `Asked device ${sn} to reset its clock from the server`,
+  });
+}
+
 /* -------------------------------------------------------------------- health */
 
 export type DeviceHealth = 'healthy' | 'stale' | 'waiting' | 'pending' | 'blocked' | 'none';
