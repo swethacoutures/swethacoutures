@@ -10,7 +10,12 @@
  * code path.
  */
 import type { IncomingMessage, ServerResponse } from 'node:http';
-import { decodeBody, defaultConfig, handleDeviceRequest } from '../_deviceIngest.js';
+import {
+  decodeBody,
+  defaultConfig,
+  deviceDateHeader,
+  handleDeviceRequest,
+} from '../_deviceIngest.js';
 
 /**
  * `_firebaseAdmin` is imported dynamically, inside the try block below, on purpose.
@@ -40,6 +45,12 @@ function sendText(res: ServerResponse, body: string): void {
   res.setHeader('Content-Length', String(payload.length));
   // Punch traffic must never be served from a CDN cache.
   res.setHeader('Cache-Control', 'no-store');
+  /*
+   * The terminal sets its clock from this header and then adds its own whole-hour offset,
+   * so for a half-hour timezone it is shifted to compensate. See clockCompensationMinutes —
+   * this is the fix for the device sitting exactly 30 minutes behind.
+   */
+  res.setHeader('Date', deviceDateHeader(defaultConfig(process.env)));
   res.end(payload);
 }
 

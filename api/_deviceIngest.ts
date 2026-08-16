@@ -281,6 +281,38 @@ export function punchStateLabel(state: string): string {
 }
 
 /**
+ * The part of the timezone the terminal cannot represent, in minutes.
+ *
+ * 🔴 THIS IS THE 30 MINUTES. The K40 Pro re-synchronises its clock from the HTTP `Date`
+ * header on our responses — it hits these endpoints every ~20 seconds — and then adds its
+ * own stored whole-hour offset. India is UTC+5:**30**, the device can only hold +5, so it
+ * lands exactly 30 minutes short. Every ~20 seconds. Which is why setting the time on the
+ * keypad appears to work and then "goes back to its own time" a moment later, and why the
+ * absolute `SET OPTION DateTime` command is accepted (`Return=0`) and then immediately
+ * overwritten by the device's next request.
+ *
+ * All of that was measured on the shop's device, not guessed: our command decoded to the
+ * correct wall clock, the device acknowledged it, and its own operation log kept stamping
+ * events exactly 30 minutes behind.
+ *
+ * So the server compensates. The `Date` header on device responses is shifted forward by
+ * this remainder, and the device's own arithmetic then lands on the correct local time. It
+ * is a lie told to one device on a private endpoint, to make its clock tell the truth.
+ *
+ * Zero for any whole-hour timezone, so this does nothing outside India-like offsets.
+ */
+export function clockCompensationMinutes(config: IngestConfig): number {
+  const remainder = config.timezoneOffsetMinutes % 60;
+  // Normalise a negative remainder (offsets west of UTC) into the same forward shift.
+  return remainder === 0 ? 0 : remainder > 0 ? remainder : remainder + 60;
+}
+
+/** The `Date` header value to send a device, already compensated. */
+export function deviceDateHeader(config: IngestConfig, now: Date = new Date()): string {
+  return new Date(now.getTime() + clockCompensationMinutes(config) * 60 * 1000).toUTCString();
+}
+
+/**
  * The `TimeZone=` line, or nothing at all.
  *
  * 🔴 India is UTC+**5:30**, and this used to send `TimeZone=5.5`. The terminal parses that
@@ -470,6 +502,18 @@ export async function touchDevice(
  */
 export const CLOCK_DRIFT_TOLERANCE_MINUTES = 3;
 
+/**
+ * The shortest gap between two drift-triggered clock pushes.
+ *
+ * Without it the server and a misconfigured terminal fight each other every minute: we set
+ * the time, the device's own stored timezone shoves it back, the next punch reports drift,
+ * and we set it again. The observed shop device did exactly that — correct stamp, wrong
+ * stamp, correct stamp, once a minute. Re-sending faster than this cannot win that argument
+ * (only fixing the device's Time Zone setting can), and it fills the command channel and the
+ * logs while trying.
+ */
+export const CLOCK_RESYNC_COOLDOWN_MS = 10 * 60 * 1000;
+
 export async function noticeClockDrift(
   store: DocStore,
   config: IngestConfig,
@@ -497,12 +541,20 @@ export async function noticeClockDrift(
 
   if (Math.abs(driftMinutes) <= CLOCK_DRIFT_TOLERANCE_MINUTES) return driftMinutes;
 
-  // Clearing the stamp is what arms the next poll to push the time.
-  await store.set(COLLECTIONS.devices, safeId(serialNumber), {
-    lastClockSyncAt: '',
-    lastClockDriftMinutes: driftMinutes,
-    updatedAt: nowIso(),
-  });
+  /*
+   * Record the drift either way — the number is what makes a wrong clock visible in the app
+   * instead of a mystery at month end. Only arm a re-push if we have not just tried one.
+   */
+  const patch: DocData = { lastClockDriftMinutes: driftMinutes, updatedAt: nowIso() };
+
+  const device = await store.get(COLLECTIONS.devices, safeId(serialNumber));
+  const lastSync = Date.parse(String(device?.lastClockSyncAt || '')) || 0;
+  if (now.getTime() - lastSync >= CLOCK_RESYNC_COOLDOWN_MS) {
+    // Clearing the stamp is what arms the next poll to push the time.
+    patch.lastClockSyncAt = '';
+  }
+
+  await store.set(COLLECTIONS.devices, safeId(serialNumber), patch);
 
   return driftMinutes;
 }

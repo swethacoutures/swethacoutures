@@ -72,22 +72,57 @@ device corrects itself on its next check-in, usually inside 30 seconds.
 > Why the server and not the keypad: a punch is worth exactly as much as the clock that
 > stamped it. The server knows the real time; the terminal does not.
 
-### If the time is still wrong after that
+### 🔴 The clock: why it kept going back, and the fix
 
-Check that the device is actually reaching us, because a device that cannot talk to the
-server cannot be corrected by it:
+**Symptom:** you set the time on the terminal, it is right for about half a minute, then it
+returns to its own time — always exactly **30 minutes behind**.
 
-1. On the device: **M/OK → COMM. → Ethernet**
-2. Confirm **Gateway** and **DNS** are *not* `0.0.0.0`. They should be roughly:
+**Cause.** The terminal re-synchronises its clock from the web server on every request, and
+it makes one every ~20 seconds. It takes the server's UTC time and adds its own timezone
+offset — but it can only hold **whole hours**. India is UTC+5:**30**, so the device uses +5
+and lands 30 minutes short, over and over. This model has no Time Zone menu, so there is
+nothing on the keypad that can correct it.
+
+This was measured on the shop's own device, not guessed:
+
+- The server's absolute time command decoded to exactly the right wall clock ✅
+- The device answered `Return=0` — accepted ✅
+- Its own operation log kept stamping events exactly 30 minutes behind ❌
+
+**The fix (in the server, already done).** The `Date` header the device reads is shifted
+forward by the half-hour the device cannot represent. The device then adds its +5:00 and
+arrives at the correct Indian time. It is computed from the configured offset, so it is
+exactly 0 for any whole-hour timezone and only ever applies to the terminal's own endpoints.
+
+**After deploying**, set the time once on the keypad if it is still wrong:
+**M/OK → System → Date Time → Set Time**. From then on the device holds the right time by
+itself. Daylight Saving Time stays **OFF** — India has none.
+
+### The app tells you when the clock is wrong
+
+Attendance shows it on the device bar, measured from the punches themselves:
+
+- **"Device clock is 30 minutes behind — a correction has been sent"** — give it a minute.
+- **"…the device did not take it — set the time on the terminal itself"** — go to the keypad.
+- **Nothing shown** — the clock is right.
+
+⚠️ **Every punch is stamped with the device's clock.** A terminal 30 minutes slow makes every
+day's hours 30 minutes wrong, so fix this before trusting a month of payroll.
+
+### If the device cannot reach the server at all
+
+Check the network, because a device that cannot talk to us cannot be corrected by us:
+
+1. **M/OK → COMM. → Ethernet**
+2. Confirm **Gateway** and **DNS** are *not* `0.0.0.0`:
    - IP Address: `192.168.1.xxx`
    - Subnet Mask: `255.255.255.0`
    - **Gateway: `192.168.1.1`**
    - **DNS: `8.8.8.8`**
 
-⚠️ **This is the single most common cause of "the device is not working".** A terminal with
-a static IP but no gateway can still be pinged from a PC on the same network, so it *looks*
-perfectly healthy — but it cannot reach the internet at all. This exact setting cost two days
-of debugging in August. Check it **before** anything else.
+⚠️ **This is the most common cause of "the device is not working".** A terminal with a static
+IP but no gateway can still be pinged from a PC on the same network, so it *looks* healthy —
+but it cannot reach the internet at all. This exact setting cost two days of debugging.
 
 3. Then **M/OK → COMM. → Cloud Server Setting**:
    - Server Address: `punch.swethacoutures.com`

@@ -18,6 +18,8 @@ import {
   createMemoryStore,
   decodeBody,
   defaultConfig,
+  clockCompensationMinutes,
+  deviceDateHeader,
   handleDeviceRequest,
   noticeClockDrift,
 } from '../api/_deviceIngest.ts';
@@ -320,6 +322,33 @@ try {
     check('a blocked device stores nothing at all', store.dump(COLLECTIONS.punches).length === beforeBlocked);
   }
 
+  /* ------------------------------------------- 7a. the half-hour offset */
+  section('7a. The 30 minutes the device cannot represent');
+  {
+    const india = defaultConfig({});
+    check('India needs a 30-minute compensation', clockCompensationMinutes(india) === 30,
+      String(clockCompensationMinutes(india)));
+
+    // A whole-hour zone must be left completely alone.
+    check('a whole-hour timezone needs none',
+      clockCompensationMinutes(defaultConfig({ DEVICE_TZ_OFFSET: '+05:00' })) === 0);
+    check('and neither does UTC',
+      clockCompensationMinutes(defaultConfig({ DEVICE_TZ_OFFSET: '+00:00' })) === 0);
+
+    /*
+     * The whole point: the device reads this header and adds its own whole-hour offset.
+     * header + 5h must equal the real Indian wall clock.
+     */
+    const now = new Date('2026-08-16T19:24:16Z');
+    const header = new Date(deviceDateHeader(india, now));
+    const deviceWouldShow = new Date(header.getTime() + 5 * 60 * 60 * 1000);
+    const correctIst = new Date(now.getTime() + 330 * 60 * 1000);
+    check(
+      "header + the device's +5:00 lands on the correct Indian time",
+      deviceWouldShow.getTime() === correctIst.getTime(),
+      `${deviceWouldShow.toISOString()} vs ${correctIst.toISOString()}`);
+  }
+
   /* ------------------------------------------------- 7b. clock drift */
   section('7b. A wrong device clock corrects itself');
   {
@@ -334,13 +363,29 @@ try {
       `${String(d.getUTCDate()).padStart(2, '0')} ${String(d.getUTCHours()).padStart(2, '0')}:` +
       `${String(d.getUTCMinutes()).padStart(2, '0')}:00`;
 
-    await store.set(COLLECTIONS.devices, KNOWN_SN, { lastClockSyncAt: new Date().toISOString() });
+    // Last synced long ago: a wrong clock should arm another push.
+    await store.set(COLLECTIONS.devices, KNOWN_SN, {
+      lastClockSyncAt: new Date(now.getTime() - 60 * 60 * 1000).toISOString(),
+    });
 
     const drift = await noticeClockDrift(store, config, KNOWN_SN, [stamp(behind)], now);
     check('a 30-minute lag is detected from the punch itself', drift !== null && Math.abs(drift - 30) <= 1, String(drift));
     check(
       'and it arms the next poll to re-send the time',
       !(await store.get(COLLECTIONS.devices, KNOWN_SN))?.lastClockSyncAt);
+    check(
+      'the drift is recorded so the app can show it',
+      (await store.get(COLLECTIONS.devices, KNOWN_SN))?.lastClockDriftMinutes === drift);
+
+    /*
+     * Just synced, and the clock is still wrong — the device is overriding us (its own Time
+     * Zone setting). Pushing again every minute cannot win that argument, so it must not.
+     */
+    await store.set(COLLECTIONS.devices, KNOWN_SN, { lastClockSyncAt: now.toISOString() });
+    await noticeClockDrift(store, config, KNOWN_SN, [stamp(behind)], now);
+    check(
+      'but it does not re-push straight after a sync it already sent',
+      !!(await store.get(COLLECTIONS.devices, KNOWN_SN))?.lastClockSyncAt);
 
     // A device that is right must not be nagged.
     await store.set(COLLECTIONS.devices, KNOWN_SN, { lastClockSyncAt: new Date().toISOString() });

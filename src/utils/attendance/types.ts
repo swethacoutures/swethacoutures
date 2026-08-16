@@ -156,6 +156,14 @@ export interface AttendanceDevice {
   /** The last time an actual punch arrived. */
   lastPunchAt?: string;
   punchCount?: number;
+  /** When the server last pushed the clock to this terminal. */
+  lastClockSyncAt?: string;
+  /**
+   * How far out the device's clock was, in minutes, the last time a punch let us check.
+   * Positive = the device is behind. Surfaced in the UI so a wrong clock is visible
+   * before it turns into a month of wrong hours.
+   */
+  lastClockDriftMinutes?: number;
   ip?: string;
   firmware?: string;
   firstSeenAt?: string;
