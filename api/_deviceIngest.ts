@@ -281,6 +281,23 @@ export function punchStateLabel(state: string): string {
 }
 
 /**
+ * The `TimeZone=` line, or nothing at all.
+ *
+ * 🔴 India is UTC+**5:30**, and this used to send `TimeZone=5.5`. The terminal parses that
+ * field as a whole number of hours, so it read `5` and sat exactly **30 minutes behind** —
+ * a punch at 00:22 was recorded as 23:52 the previous day, which also throws the date out
+ * either side of midnight.
+ *
+ * A half-hour zone simply cannot be expressed in this field, so for one we send nothing and
+ * let `SET OPTION DateTime=` carry the absolute local time instead. That is unambiguous: it
+ * is the wall-clock time we want the device to show, with no offset arithmetic on its side.
+ */
+function timeZoneLines(config: IngestConfig): string[] {
+  const hours = config.timezoneOffsetMinutes / 60;
+  return Number.isInteger(hours) ? [`TimeZone=${hours}`] : [];
+}
+
+/**
  * The boot handshake reply.
  *
  * Not JSON and not free-form: a `GET OPTION FROM: <SN>` header followed by key=value lines.
@@ -300,7 +317,7 @@ export function buildHandshakeResponse(serialNumber: string, config: IngestConfi
     'TransInterval=1',
     // Which tables the device may push: attendance, operation log, user info, fingerprint.
     'TransFlag=1111000000',
-    `TimeZone=${config.timezoneOffsetMinutes / 60}`,
+    ...timeZoneLines(config),
     'Realtime=1',
     'Encrypt=0',
     'ATTLOGStamp=0',
@@ -343,7 +360,7 @@ export function buildPushConfigResponse(serialNumber: string, config: IngestConf
     `Realtime=1`,
     `SessionID=${serialNumber}`,
     `TimeoutSec=10`,
-    `TimeZone=${config.timezoneOffsetMinutes / 60}`,
+    ...timeZoneLines(config),
     '',
   ].join('\n');
 }
@@ -437,6 +454,57 @@ export async function touchDevice(
     isNew: false,
     lastClockSyncAt: existing.lastClockSyncAt ? String(existing.lastClockSyncAt) : undefined,
   };
+}
+
+/**
+ * Notices that the terminal's clock is wrong, from the punches themselves.
+ *
+ * A punch carries the time the device believed it was. Comparing that with the time the
+ * request actually arrived is the only clock check available — and it is a good one, because
+ * a punch is delivered within a second or two of being made.
+ *
+ * When they disagree by more than `CLOCK_DRIFT_TOLERANCE_MINUTES`, the stored sync stamp is
+ * cleared so the very next command poll (~30 seconds away) re-sends the time. That turns a
+ * wrong clock into a self-correcting problem instead of one that waits for the next
+ * scheduled sync — or for somebody to notice the hours are wrong on payday.
+ */
+export const CLOCK_DRIFT_TOLERANCE_MINUTES = 3;
+
+export async function noticeClockDrift(
+  store: DocStore,
+  config: IngestConfig,
+  serialNumber: string,
+  deviceLocalTimes: string[],
+  now: Date = new Date()
+): Promise<number | null> {
+  const latest = deviceLocalTimes.filter(Boolean).sort().pop();
+  if (!latest) return null;
+
+  // 'YYYY-MM-DD HH:mm:ss' as the device believes it. Parsed by arithmetic, never by
+  // `new Date(string)` — the server runs in UTC and that would shift it.
+  const match = /^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})(?::(\d{2}))?/.exec(latest.trim());
+  if (!match) return null;
+
+  const [, year, month, day, hour, minute, second] = match;
+  const deviceMs = Date.UTC(
+    Number(year), Number(month) - 1, Number(day),
+    Number(hour), Number(minute), Number(second || '0')
+  );
+
+  // The same instant expressed the way the device should be showing it.
+  const shopMs = now.getTime() + config.timezoneOffsetMinutes * 60 * 1000;
+  const driftMinutes = Math.round((shopMs - deviceMs) / 60000);
+
+  if (Math.abs(driftMinutes) <= CLOCK_DRIFT_TOLERANCE_MINUTES) return driftMinutes;
+
+  // Clearing the stamp is what arms the next poll to push the time.
+  await store.set(COLLECTIONS.devices, safeId(serialNumber), {
+    lastClockSyncAt: '',
+    lastClockDriftMinutes: driftMinutes,
+    updatedAt: nowIso(),
+  });
+
+  return driftMinutes;
 }
 
 /** Bumps the device's punch counters after a successful batch. */
@@ -1012,10 +1080,28 @@ export async function handleDeviceRequest(
         const result = await recordPunches(store, config, serialNumber, rows, { fold: approved });
         if (approved) await markDevicePunches(store, serialNumber, device, result.stored);
 
+        // The punches double as a clock check — see noticeClockDrift.
+        let drift: number | null = null;
+        if (approved && rows.length > 0) {
+          try {
+            drift = await noticeClockDrift(
+              store,
+              config,
+              serialNumber,
+              rows.map((row) => row.normalised.local)
+            );
+          } catch {
+            // A clock check must never cost us a punch we already hold.
+          }
+        }
+
         return ok(
           `${serialNumber}: ${rows.length} punch(es) in — ${result.stored} new, ` +
             `${result.duplicates} already seen, ${result.daysWritten} day record(s) updated` +
             (skipped.length ? `, ${skipped.length} malformed row(s) skipped` : '') +
+            (drift !== null && Math.abs(drift) > CLOCK_DRIFT_TOLERANCE_MINUTES
+              ? `, device clock is ${drift} min out — resync queued`
+              : '') +
             (approved ? '' : ' [device not approved, punches parked]')
         );
       }

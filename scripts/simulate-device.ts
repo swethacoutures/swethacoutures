@@ -19,6 +19,7 @@ import {
   decodeBody,
   defaultConfig,
   handleDeviceRequest,
+  noticeClockDrift,
 } from '../api/_deviceIngest.ts';
 
 const KNOWN_SN = 'BOCK200961014';
@@ -127,7 +128,15 @@ try {
       JSON.stringify(response.body.slice(0, 60))
     );
     check('asks for realtime delivery', response.body.includes('Realtime=1'));
-    check('sends the device timezone as decimal hours', response.body.includes('TimeZone=5.5'));
+    /*
+     * India is UTC+5:30 and the terminal reads TimeZone as whole hours, so `5.5` was read as
+     * `5` and the clock sat 30 minutes behind. A half-hour zone is not expressible here, so
+     * the line is omitted and `SET OPTION DateTime=` carries the absolute local time instead.
+     */
+    check('never sends a fractional timezone the device would truncate',
+      !/TimeZone=\d+\.\d/.test(response.body), JSON.stringify(response.body.slice(0, 200)));
+    check('omits the timezone entirely for a half-hour zone',
+      !response.body.includes('TimeZone='), JSON.stringify(response.body.slice(0, 200)));
 
     const saved = await store.get(COLLECTIONS.devices, KNOWN_SN);
     check('device registered on first contact', !!saved);
@@ -311,6 +320,37 @@ try {
     check('a blocked device stores nothing at all', store.dump(COLLECTIONS.punches).length === beforeBlocked);
   }
 
+  /* ------------------------------------------------- 7b. clock drift */
+  section('7b. A wrong device clock corrects itself');
+  {
+    const config = defaultConfig({});
+
+    // A punch stamped 30 minutes behind the real time — exactly the half-hour timezone bug.
+    const now = new Date();
+    const shopNow = new Date(now.getTime() + config.timezoneOffsetMinutes * 60 * 1000);
+    const behind = new Date(shopNow.getTime() - 30 * 60 * 1000);
+    const stamp = (d: Date) =>
+      `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}-` +
+      `${String(d.getUTCDate()).padStart(2, '0')} ${String(d.getUTCHours()).padStart(2, '0')}:` +
+      `${String(d.getUTCMinutes()).padStart(2, '0')}:00`;
+
+    await store.set(COLLECTIONS.devices, KNOWN_SN, { lastClockSyncAt: new Date().toISOString() });
+
+    const drift = await noticeClockDrift(store, config, KNOWN_SN, [stamp(behind)], now);
+    check('a 30-minute lag is detected from the punch itself', drift !== null && Math.abs(drift - 30) <= 1, String(drift));
+    check(
+      'and it arms the next poll to re-send the time',
+      !(await store.get(COLLECTIONS.devices, KNOWN_SN))?.lastClockSyncAt);
+
+    // A device that is right must not be nagged.
+    await store.set(COLLECTIONS.devices, KNOWN_SN, { lastClockSyncAt: new Date().toISOString() });
+    const noDrift = await noticeClockDrift(store, config, KNOWN_SN, [stamp(shopNow)], now);
+    check('a correct clock is left alone', Math.abs(noDrift ?? 99) <= 1, String(noDrift));
+    check(
+      'and its sync stamp is untouched',
+      !!(await store.get(COLLECTIONS.devices, KNOWN_SN))?.lastClockSyncAt);
+  }
+
   /* ---------------------------------------------------- 8. command polls */
   section('8. Command polling and connection test');
   {
@@ -318,7 +358,11 @@ try {
      * The first poll after approval carries the clock. The terminal's own RTC drifts and
      * resets, and setting it on the keypad does not stick, so the server pushes the time
      * rather than trusting the device to keep it.
+     *
+     * The stamp is cleared first because the drift section above deliberately left a fresh
+     * one behind — without this the poll would correctly decide no sync was due.
      */
+    await store.set(COLLECTIONS.devices, KNOWN_SN, { lastClockSyncAt: '' });
     const firstPoll = await device.poll();
     check(
       'the first command poll pushes the clock',
