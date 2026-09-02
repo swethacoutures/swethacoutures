@@ -323,31 +323,26 @@ try {
     check('a blocked device stores nothing at all', store.dump(COLLECTIONS.punches).length === beforeBlocked);
   }
 
-  /* ------------------------------------------- 7a. the half-hour offset */
-  section('7a. The 30 minutes the device cannot represent');
+  /* ------------------------------------------- 7a. the Date header we send */
+  section('7a. The Date header is the real time, not a compensated one');
   {
     const india = defaultConfig({});
-    check('India needs a 30-minute compensation', clockCompensationMinutes(india) === 30,
-      String(clockCompensationMinutes(india)));
-
-    // A whole-hour zone must be left completely alone.
-    check('a whole-hour timezone needs none',
-      clockCompensationMinutes(defaultConfig({ DEVICE_TZ_OFFSET: '+05:00' })) === 0);
-    check('and neither does UTC',
-      clockCompensationMinutes(defaultConfig({ DEVICE_TZ_OFFSET: '+00:00' })) === 0);
 
     /*
-     * The whole point: the device reads this header and adds its own whole-hour offset.
-     * header + 5h must equal the real Indian wall clock.
+     * The server used to shift this header forward 30 minutes, to compensate for the
+     * ORIGINAL terminal reading `TimeZone=5.5` as `5` and sitting half an hour behind.
+     * The replacement keeps correct time on its own, so that shift would push it 30
+     * minutes FAST — and every punch with it. It is gone; these guard its return.
      */
+    check('no compensation is applied for India', clockCompensationMinutes(india) === 0,
+      String(clockCompensationMinutes(india)));
+    check('nor for a whole-hour timezone',
+      clockCompensationMinutes(defaultConfig({ DEVICE_TZ_OFFSET: '+05:00' })) === 0);
+
     const now = new Date('2026-08-16T19:24:16Z');
-    const header = new Date(deviceDateHeader(india, now));
-    const deviceWouldShow = new Date(header.getTime() + 5 * 60 * 60 * 1000);
-    const correctIst = new Date(now.getTime() + 330 * 60 * 1000);
-    check(
-      "header + the device's +5:00 lands on the correct Indian time",
-      deviceWouldShow.getTime() === correctIst.getTime(),
-      `${deviceWouldShow.toISOString()} vs ${correctIst.toISOString()}`);
+    check('the header is exactly the current time',
+      new Date(deviceDateHeader(india, now)).getTime() === new Date(now.toUTCString()).getTime(),
+      deviceDateHeader(india, now));
   }
 
   /* ------------------------------ 7c. correcting an unfixable clock */

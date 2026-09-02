@@ -329,35 +329,29 @@ export function punchStateLabel(state: string): string {
 }
 
 /**
- * The part of the timezone the terminal cannot represent, in minutes.
+ * How far to shift the `Date` header we send a device. Always zero.
  *
- * 🔴 THIS IS THE 30 MINUTES. The K40 Pro re-synchronises its clock from the HTTP `Date`
- * header on our responses — it hits these endpoints every ~20 seconds — and then adds its
- * own stored whole-hour offset. India is UTC+5:**30**, the device can only hold +5, so it
- * lands exactly 30 minutes short. Every ~20 seconds. Which is why setting the time on the
- * keypad appears to work and then "goes back to its own time" a moment later, and why the
- * absolute `SET OPTION DateTime` command is accepted (`Return=0`) and then immediately
- * overwritten by the device's next request.
+ * 🔴 History, because this was a real 30-minute error and could be reintroduced by someone
+ * "fixing" it again. The shop's ORIGINAL K40 Pro re-synchronised its clock from the HTTP
+ * `Date` header and then added its own stored whole-hour offset. India is UTC+5:**30**, that
+ * firmware could only hold +5, so it landed exactly 30 minutes short — every ~20 seconds,
+ * which is why setting the time on the keypad appeared to work and then reverted.
  *
- * All of that was measured on the shop's device, not guessed: our command decoded to the
- * correct wall clock, the device acknowledged it, and its own operation log kept stamping
- * events exactly 30 minutes behind.
+ * The server used to compensate by shifting the header forward 30 minutes. That fixed the
+ * old unit and is **wrong for any device whose clock is correct**: it pushes it 30 minutes
+ * FAST, and every punch with it. The replacement terminal keeps correct time on its own, so
+ * the compensation is gone and the header is now simply the truth.
  *
- * So the server compensates. The `Date` header on device responses is shifted forward by
- * this remainder, and the device's own arithmetic then lands on the correct local time. It
- * is a lie told to one device on a private endpoint, to make its clock tell the truth.
- *
- * Zero for any whole-hour timezone, so this does nothing outside India-like offsets.
+ * Kept as a function returning 0 rather than deleted, so the reasoning stays attached to
+ * the decision instead of vanishing from the file.
  */
-export function clockCompensationMinutes(config: IngestConfig): number {
-  const remainder = config.timezoneOffsetMinutes % 60;
-  // Normalise a negative remainder (offsets west of UTC) into the same forward shift.
-  return remainder === 0 ? 0 : remainder > 0 ? remainder : remainder + 60;
+export function clockCompensationMinutes(_config: IngestConfig): number {
+  return 0;
 }
 
-/** The `Date` header value to send a device, already compensated. */
-export function deviceDateHeader(config: IngestConfig, now: Date = new Date()): string {
-  return new Date(now.getTime() + clockCompensationMinutes(config) * 60 * 1000).toUTCString();
+/** The `Date` header value to send a device: the real time, uncompensated. */
+export function deviceDateHeader(_config: IngestConfig, now: Date = new Date()): string {
+  return now.toUTCString();
 }
 
 /**

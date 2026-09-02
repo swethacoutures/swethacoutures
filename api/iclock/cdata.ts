@@ -46,9 +46,12 @@ function sendText(res: ServerResponse, body: string): void {
   // Punch traffic must never be served from a CDN cache.
   res.setHeader('Cache-Control', 'no-store');
   /*
-   * The terminal sets its clock from this header and then adds its own whole-hour offset,
-   * so for a half-hour timezone it is shifted to compensate. See clockCompensationMinutes —
-   * this is the fix for the device sitting exactly 30 minutes behind.
+   * The terminal sets its clock from this header, so it is sent as the plain truth.
+   *
+   * It used to be shifted forward 30 minutes to compensate for the original unit reading
+   * `TimeZone=5.5` as `5`. That compensation is removed: a terminal that keeps correct time
+   * would be pushed 30 minutes FAST by it, and every punch with it. See
+   * clockCompensationMinutes for the full history before changing this back.
    */
   res.setHeader('Date', deviceDateHeader(defaultConfig(process.env)));
   res.end(payload);
