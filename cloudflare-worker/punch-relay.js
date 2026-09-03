@@ -60,6 +60,14 @@ function deviceHeaders() {
     'Cache-Control': 'no-store',
     // The compensated clock. See the block above before changing this.
     Date: new Date(Date.now() + DATE_SHIFT_MINUTES * 60_000).toUTCString(),
+    /*
+     * Verification marker. Cloudflare stamps its own `Date` on responses, so if the shift
+     * above never reaches the device there is no way to tell "the Worker is not deployed"
+     * from "the edge overwrote the header" — both look identical from outside. This header
+     * is ours alone: if it comes back, the Worker is live and any wrong `Date` is the edge
+     * overriding us. The device ignores headers it does not recognise.
+     */
+    'X-Clock-Shift': String(DATE_SHIFT_MINUTES),
   };
 }
 
