@@ -38,6 +38,18 @@ export interface DocStore {
 export interface IngestConfig {
   /** Minutes east of UTC that the device's clock is set to. India = 330. */
   timezoneOffsetMinutes: number;
+  /**
+   * What the terminal internally believes its timezone to be, in minutes east of UTC.
+   *
+   * ZKTeco ships from China with a factory default of **GMT+8 (480)**. The device reads the
+   * HTTP `Date` header (UTC) and adds this offset to get the time it displays and stamps on
+   * punches. If the device shows a different timezone, this value must match.
+   *
+   * When this differs from `timezoneOffsetMinutes` (the shop's actual timezone), the server
+   * compensates both the `Date` header and the `SET OPTION DateTime=` command so the device
+   * displays and stamps the correct local time.
+   */
+  deviceInternalTzMinutes: number;
   /** Trust any device that connects. Off by default; approve in the app instead. */
   autoApproveDevices: boolean;
   /** 'data' logs uploads only, 'all' also logs the ~30s command polls, 'off' logs nothing. */
@@ -72,10 +84,20 @@ export function defaultConfig(env: Record<string, string | undefined> = {}): Ing
     ? (offset[1] === '-' ? -1 : 1) * (Number(offset[2]) * 60 + Number(offset[3]))
     : 330;
 
+  // The device's internal timezone. Default +08:00 (480) = ZKTeco China factory default.
+  // Set DEVICE_INTERNAL_TZ=+05:30 if the device keeps correct time on its own.
+  const internalTz = /^([+-])(\d{2}):?(\d{2})$/.exec(
+    (env.DEVICE_INTERNAL_TZ || '+08:00').trim()
+  );
+  const internalTzMinutes = internalTz
+    ? (internalTz[1] === '-' ? -1 : 1) * (Number(internalTz[2]) * 60 + Number(internalTz[3]))
+    : 480;
+
   const rawMode = (env.RAW_LOG_MODE || 'data').trim().toLowerCase();
 
   return {
     timezoneOffsetMinutes: minutes,
+    deviceInternalTzMinutes: internalTzMinutes,
     autoApproveDevices: /^(1|true|yes|on)$/i.test(String(env.AUTO_APPROVE_DEVICES || '')),
     rawLogMode: rawMode === 'all' || rawMode === 'off' ? rawMode : 'data',
     rawLogMaxBytes: Number(env.RAW_LOG_MAX_BYTES) || 16 * 1024,
@@ -329,29 +351,38 @@ export function punchStateLabel(state: string): string {
 }
 
 /**
- * How far to shift the `Date` header we send a device. Always zero.
+ * How far to shift the `Date` header we send a device.
  *
- * 🔴 History, because this was a real 30-minute error and could be reintroduced by someone
- * "fixing" it again. The shop's ORIGINAL K40 Pro re-synchronised its clock from the HTTP
- * `Date` header and then added its own stored whole-hour offset. India is UTC+5:**30**, that
- * firmware could only hold +5, so it landed exactly 30 minutes short — every ~20 seconds,
- * which is why setting the time on the keypad appeared to work and then reverted.
+ * 🔴 THE CLOCK FIX. The device reads the HTTP `Date` header (which is in UTC per the HTTP
+ * spec) and then adds its own internal timezone to display and stamp punches. When the
+ * device's internal timezone differs from the shop's, every response pushes the wrong time.
  *
- * The server used to compensate by shifting the header forward 30 minutes. That fixed the
- * old unit and is **wrong for any device whose clock is correct**: it pushes it 30 minutes
- * FAST, and every punch with it. The replacement terminal keeps correct time on its own, so
- * the compensation is gone and the header is now simply the truth.
+ * The compensation is: `shopTz − deviceTz`. For India (+5:30 = 330 min) and a Chinese
+ * factory-default device (+8:00 = 480 min), that is 330 − 480 = **−150 minutes**: the
+ * header is sent 2h30m behind UTC so the device's +8:00 addition lands on India time.
  *
- * Kept as a function returning 0 rather than deleted, so the reasoning stays attached to
- * the decision instead of vanishing from the file.
+ *     header (UTC − 150 min) + device's +8:00 = UTC + 330 min = correct India time ✅
+ *
+ * If a replacement device keeps correct time on its own, set `DEVICE_INTERNAL_TZ` equal to
+ * `DEVICE_TZ_OFFSET` (both +05:30) and the shift becomes zero — no compensation needed.
+ *
+ * 🔴 History: the Cloudflare Worker (`punch-relay.js`) also applies this shift, but
+ * Cloudflare's edge network can overwrite the `Date` header before the device sees it.
+ * Verified on 2026-09-03: no `X-Clock-Shift` header reached the device, and the `Date`
+ * was plain UTC. So the compensation MUST also live here in the Vercel function, where we
+ * set the header directly and nothing sits between us and the device.
  */
-export function clockCompensationMinutes(_config: IngestConfig): number {
-  return 0;
+export function clockCompensationMinutes(config: IngestConfig): number {
+  return config.timezoneOffsetMinutes - config.deviceInternalTzMinutes;
 }
 
-/** The `Date` header value to send a device: the real time, uncompensated. */
-export function deviceDateHeader(_config: IngestConfig, now: Date = new Date()): string {
-  return now.toUTCString();
+/**
+ * The `Date` header value to send a device: shifted so the device's own timezone arithmetic
+ * lands on the shop's local time.
+ */
+export function deviceDateHeader(config: IngestConfig, now: Date = new Date()): string {
+  const shiftMs = clockCompensationMinutes(config) * 60 * 1000;
+  return new Date(now.getTime() + shiftMs).toUTCString();
 }
 
 /**
@@ -962,10 +993,12 @@ interface QueuedCommand {
  * How often the server re-sends the clock, in milliseconds.
  *
  * The terminal's real-time clock drifts by a few seconds a day and loses the time entirely
- * whenever it is unplugged long enough to flatten its coin cell. Six hours is often enough
- * that nobody ever sees a wrong time, and rare enough that it costs one extra command a day.
+ * whenever it is unplugged long enough to flatten its coin cell. One hour is often enough
+ * that nobody ever sees a wrong time, and rare enough that it costs a few extra commands
+ * a day. (Was 6 hours, reduced to 1 hour because the `Date` header compensation can be
+ * overridden by Cloudflare's edge, making this command the primary clock correction.)
  */
-export const CLOCK_SYNC_INTERVAL_MS = 6 * 60 * 60 * 1000;
+export const CLOCK_SYNC_INTERVAL_MS = 1 * 60 * 60 * 1000;
 
 /**
  * ZKTeco's date-time encoding.
@@ -996,6 +1029,12 @@ export function encodeDeviceTime(local: Date): number {
  * offset. The shifted Date is then read with its **UTC** getters, which is what makes the
  * arithmetic independent of whatever timezone the server happens to run in — Vercel is UTC,
  * a laptop in Kakinada is not, and both must produce the same answer.
+ *
+ * 🔴 When the device's internal timezone differs from the shop's, `SET OPTION DateTime`
+ * is interpreted by the device as "set my wall clock to this value" — but some firmware
+ * versions then re-derive the display time from the `Date` header on the very next poll.
+ * In that case the `Date` header shift (see `deviceDateHeader`) is what keeps the time
+ * right between command pushes. This command serves as a backstop.
  */
 export function buildClockSyncCommand(now: Date, config: IngestConfig): string {
   const local = new Date(now.getTime() + config.timezoneOffsetMinutes * 60 * 1000);

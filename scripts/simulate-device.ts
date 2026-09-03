@@ -323,25 +323,31 @@ try {
     check('a blocked device stores nothing at all', store.dump(COLLECTIONS.punches).length === beforeBlocked);
   }
 
-  /* ------------------------------------------- 7a. the Date header we send */
-  section('7a. The Date header is the real time, not a compensated one');
+  /* ------------------------------------------- 7a. the Date header compensates for the device's timezone */
+  section('7a. The Date header compensates for the device\'s internal timezone');
   {
     const india = defaultConfig({});
 
     /*
-     * The server used to shift this header forward 30 minutes, to compensate for the
-     * ORIGINAL terminal reading `TimeZone=5.5` as `5` and sitting half an hour behind.
-     * The replacement keeps correct time on its own, so that shift would push it 30
-     * minutes FAST — and every punch with it. It is gone; these guard its return.
+     * The device reads the HTTP `Date` header (UTC) and adds its internal timezone
+     * (+8:00 = 480 min by default). To make it display India time (+5:30 = 330 min),
+     * we shift the header by shopTz − deviceTz = 330 − 480 = −150 minutes.
      */
-    check('no compensation is applied for India', clockCompensationMinutes(india) === 0,
+    check('India + default device TZ gives -150 min shift',
+      clockCompensationMinutes(india) === -150,
       String(clockCompensationMinutes(india)));
-    check('nor for a whole-hour timezone',
-      clockCompensationMinutes(defaultConfig({ DEVICE_TZ_OFFSET: '+05:00' })) === 0);
+
+    // A device whose internal timezone matches the shop needs no compensation.
+    check('no shift when device TZ matches shop TZ',
+      clockCompensationMinutes(defaultConfig({
+        DEVICE_TZ_OFFSET: '+05:30', DEVICE_INTERNAL_TZ: '+05:30'
+      })) === 0);
 
     const now = new Date('2026-08-16T19:24:16Z');
-    check('the header is exactly the current time',
-      new Date(deviceDateHeader(india, now)).getTime() === new Date(now.toUTCString()).getTime(),
+    // With the default −150 min shift, the header should be 2h30m behind UTC.
+    const expected = new Date(now.getTime() - 150 * 60 * 1000);
+    check('the header is shifted by the compensation',
+      new Date(deviceDateHeader(india, now)).getTime() === new Date(expected.toUTCString()).getTime(),
       deviceDateHeader(india, now));
   }
 
@@ -444,7 +450,7 @@ try {
     );
 
     const encoded = Number(/DateTime=(\d+)/.exec(firstPoll.body)?.[1]);
-    check('the pushed time is a plausible ZKTeco stamp', encoded > 800_000_000 && encoded < 1_000_000_000, encoded);
+    check('the pushed time is a plausible ZKTeco stamp', encoded > 800_000_000 && encoded < 1_000_000_000, String(encoded));
 
     // And it must not be re-sent on every poll — that is a command every ~16 seconds.
     const secondPoll = await device.poll();

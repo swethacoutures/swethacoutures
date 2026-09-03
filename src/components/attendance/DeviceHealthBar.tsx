@@ -184,30 +184,6 @@ const DeviceHealthBar: React.FC<DeviceHealthBarProps> = ({ devices, loading, onC
     }
   };
 
-  /**
-   * What to say about a wrong clock — and it depends on whether we have already tried.
-   *
-   * If the server pushed the time recently and the device is still out, the device is
-   * ignoring us and only the keypad will fix it. Saying "queued" in that case sends the
-   * owner away thinking it is handled.
-   */
-  const clockWarning = (() => {
-    const drift = summary.device?.lastClockDriftMinutes;
-    if (typeof drift !== 'number' || Math.abs(drift) <= 3) return '';
-
-    const size = `${Math.abs(drift)} minute${Math.abs(drift) === 1 ? '' : 's'}`;
-    const way = drift > 0 ? 'behind' : 'ahead';
-
-    const syncedAt = Date.parse(summary.device?.lastClockSyncAt || '');
-    const syncedRecently = Number.isFinite(syncedAt) && Date.now() - syncedAt < 15 * 60 * 1000;
-
-    return syncedRecently
-      ? `Device clock is ${size} ${way}. The server has already sent a correction and the ` +
-        `device did not take it — set the time on the terminal itself: Menu → System → ` +
-        `Date Time → Set Time. Every punch is ${size} out until then.`
-      : `Device clock is ${size} ${way} — a correction has been sent. If it is still wrong ` +
-        `in a few minutes, set the time on the terminal: Menu → System → Date Time.`;
-  })();
 
   const tone = {
     healthy: 'border-green-200 bg-green-50 dark:border-green-900 dark:bg-green-950/40',
@@ -310,21 +286,7 @@ const DeviceHealthBar: React.FC<DeviceHealthBarProps> = ({ devices, loading, onC
             </p>
           )}
 
-          {/*
-            The clock, stated plainly. Measured from the punches themselves, so it is what
-            the device actually believed the time was — not a guess. A wrong clock is
-            invisible until payday otherwise.
 
-            Two different messages, because they need two different actions. Some firmware
-            acknowledges `SET OPTION DateTime` with Return=0 and then ignores it — this
-            shop's K40 Pro does exactly that. Telling someone "a correction has been queued"
-            when the device will not accept corrections is worse than saying nothing.
-          */}
-          {clockWarning && (
-            <p className="mt-1 text-xs font-medium text-amber-700 dark:text-amber-400">
-              {clockWarning}
-            </p>
-          )}
 
           {/* Already correcting: say so, because it explains why the wall clock and the
               recorded times disagree, and give a way to undo it. */}
