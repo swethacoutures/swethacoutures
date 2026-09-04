@@ -170,7 +170,17 @@ device set to plain HTTP, 20 punches arrived and folded into a day record correc
 
 ---
 
-## Putting Cloudflare in front (the permanent fix)
+## Putting Cloudflare in front (fallback only)
+
+> **Not needed for this shop.** The terminal reaches `https://swethacoutures.vercel.app`
+> directly, with HTTPS ON, and has done since 2026-09-04. What actually blocked it earlier
+> was the device's **Gateway and DNS both set to `0.0.0.0`** — it had no route off the LAN
+> at all, which looked like a certificate problem and was not. Check those two fields first.
+>
+> Prefer the direct connection: the Worker rebuilds the response from scratch and drops the
+> origin's headers, so the automatic per-device clock correction cannot reach the terminal
+> through it. Use this section only if the device genuinely cannot do HTTPS.
+
 
 Gives the device a plain-HTTP address on the internet, so no certificate is involved on the
 device's side. Free, and nothing to maintain.
@@ -365,10 +375,35 @@ Check the `path` and `body` of a log entry:
 - Body has rows but the Punches tab is empty → the device is `pending` or `blocked`. Approve
   it on the Attendance page.
 
-### Punches show the wrong time of day
+### The terminal shows the wrong time of day
 
-The device's clock is set to a different timezone than `DEVICE_TZ_OFFSET`. The original string
-is always kept in `punchTimeRaw`, so nothing is lost — fix the setting and restart.
+**The terminal's clock is whatever our server tells it.** It re-reads the HTTP `Date` header
+on our replies every ~16 seconds and re-derives its display from that, adding its own stored
+timezone. So:
+
+- Setting the time on the keypad never sticks — the next poll overwrites it.
+- Running ZKBio Time appears to fix it, but only while the program is open. That is simply a
+  second ADMS server sending its own `Date`; close it and the clock comes back to ours.
+- The clock is only ever as right as the `Date` header we send.
+
+**Send the honest time.** `DEVICE_INTERNAL_TZ` is blank by default, which means no shift.
+Resist the urge to put a "compensation" in it. On 2026-09-04 it was set to `+08:00` on the
+theory that ZKTeco ships from China on Beijing time; the shop's terminal was already on
+`+05:30`, so the −150 minute shift corrected nothing and left the displayed clock **2h30m
+behind** for two days. Staff read the wrong time off the wall and assumed the system was
+broken.
+
+**A device that genuinely is on another timezone corrects itself.** Every punch is compared
+with the moment it arrived, and once two readings agree the server adjusts that device's own
+`Date` shift by the measured error (`devices/<SN>.clockShiftMinutes`) and re-checks. Two
+agreeing readings are required because a terminal that was offline flushes its buffered
+punches on reconnect, and old timestamps look exactly like a wrong clock.
+
+To check a terminal's clock without waiting for someone to punch, read its `OPERLOG`
+heartbeat in `deviceRawLogs` — the body carries the device's own time — and compare with
+`receivedAt` plus 5:30.
+
+`punchTimeRaw` always keeps the device's original string, so a wrong clock never loses data.
 
 ### Capturing everything
 
