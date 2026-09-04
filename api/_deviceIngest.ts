@@ -76,6 +76,12 @@ export interface DeviceResponse {
   body: string;
   /** Short line for the server log. */
   log: string;
+  /**
+   * Minutes to shift this reply's `Date` header by, learned from this device's own drift.
+   * Undefined when the request never got as far as identifying a device; the adapter then
+   * falls back to the config default.
+   */
+  clockShiftMinutes?: number;
 }
 
 export function defaultConfig(env: Record<string, string | undefined> = {}): IngestConfig {
@@ -84,14 +90,23 @@ export function defaultConfig(env: Record<string, string | undefined> = {}): Ing
     ? (offset[1] === '-' ? -1 : 1) * (Number(offset[2]) * 60 + Number(offset[3]))
     : 330;
 
-  // The device's internal timezone. Default +08:00 (480) = ZKTeco China factory default.
-  // Set DEVICE_INTERNAL_TZ=+05:30 if the device keeps correct time on its own.
-  const internalTz = /^([+-])(\d{2}):?(\d{2})$/.exec(
-    (env.DEVICE_INTERNAL_TZ || '+08:00').trim()
-  );
+  /*
+   * What the terminal's own clock believes its timezone is.
+   *
+   * 🔴 The default is the shop's own offset — that is, NO compensation, send the honest
+   * time. It used to default to +08:00 on the theory that ZKTeco ships from China on
+   * Beijing time. Guessing that is what put the shop's clock 2h30m WRONG: the replacement
+   * terminal's Time Zone was already correct, so subtracting 150 minutes from the `Date`
+   * header dragged it 2h30m behind instead of fixing anything.
+   *
+   * A terminal that keeps correct time needs nothing from us. One that does not is
+   * corrected per-device, from measurement, by `noticeClockDrift`. This variable only
+   * chooses the starting point for a device we have never heard from.
+   */
+  const internalTz = /^([+-])(\d{2}):?(\d{2})$/.exec((env.DEVICE_INTERNAL_TZ || '').trim());
   const internalTzMinutes = internalTz
     ? (internalTz[1] === '-' ? -1 : 1) * (Number(internalTz[2]) * 60 + Number(internalTz[3]))
-    : 480;
+    : minutes;
 
   const rawMode = (env.RAW_LOG_MODE || 'data').trim().toLowerCase();
 
@@ -366,23 +381,40 @@ export function punchStateLabel(state: string): string {
  * If a replacement device keeps correct time on its own, set `DEVICE_INTERNAL_TZ` equal to
  * `DEVICE_TZ_OFFSET` (both +05:30) and the shift becomes zero — no compensation needed.
  *
- * 🔴 History: the Cloudflare Worker (`punch-relay.js`) also applies this shift, but
- * Cloudflare's edge network can overwrite the `Date` header before the device sees it.
- * Verified on 2026-09-03: no `X-Clock-Shift` header reached the device, and the `Date`
- * was plain UTC. So the compensation MUST also live here in the Vercel function, where we
- * set the header directly and nothing sits between us and the device.
+ * 🔴 A shift is a LAST RESORT, and the default is zero. Measured 2026-09-04: this function
+ * was returning −150 for a terminal whose Time Zone was already +05:30, and the shop clock
+ * read 2h30m BEHIND — the shift was the entire fault. A device that keeps correct time must
+ * be sent the correct time. Never assume a device's timezone; measure it.
+ *
+ * The per-device value learned by `noticeClockDrift` overrides this. This function only
+ * supplies the opening guess for a terminal we have never heard from.
  */
 export function clockCompensationMinutes(config: IngestConfig): number {
   return config.timezoneOffsetMinutes - config.deviceInternalTzMinutes;
 }
 
+/** Nothing legitimate exceeds a whole timezone's worth of correction. */
+export const CLOCK_SHIFT_LIMIT_MINUTES = 14 * 60;
+
 /**
- * The `Date` header value to send a device: shifted so the device's own timezone arithmetic
- * lands on the shop's local time.
+ * The `Date` header value to send a device.
+ *
+ * The terminal re-derives its displayed clock from this header on every poll (~16s), which
+ * is why the shop clock follows whatever we put here and why closing ZKBioTime handed the
+ * clock straight back to us. `shiftMinutes` is that device's learned correction; omitted,
+ * the config default applies, and both are normally zero — the honest time.
  */
-export function deviceDateHeader(config: IngestConfig, now: Date = new Date()): string {
-  const shiftMs = clockCompensationMinutes(config) * 60 * 1000;
-  return new Date(now.getTime() + shiftMs).toUTCString();
+export function deviceDateHeader(
+  config: IngestConfig,
+  now: Date = new Date(),
+  shiftMinutes?: number | null
+): string {
+  const shift =
+    typeof shiftMinutes === 'number' && Number.isFinite(shiftMinutes)
+      ? shiftMinutes
+      : clockCompensationMinutes(config);
+  const clamped = Math.max(-CLOCK_SHIFT_LIMIT_MINUTES, Math.min(CLOCK_SHIFT_LIMIT_MINUTES, shift));
+  return new Date(now.getTime() + clamped * 60 * 1000).toUTCString();
 }
 
 /**
@@ -509,6 +541,11 @@ export interface DeviceState {
    * it off meant the check saw `undefined` every time and re-sent the command on every poll.
    */
   lastClockSyncAt?: string;
+  /**
+   * Minutes this device's `Date` header is shifted by, learned from its own drift.
+   * Zero for a terminal that keeps correct time, which is the normal case.
+   */
+  clockShiftMinutes?: number;
 }
 
 /**
@@ -544,7 +581,13 @@ export async function touchDevice(
       createdAt: timestamp,
       updatedAt: timestamp,
     });
-    return { id, status, punchCount: 0, isNew: true };
+    return {
+      id,
+      status,
+      punchCount: 0,
+      isNew: true,
+      clockShiftMinutes: clockCompensationMinutes(config),
+    };
   }
 
   // Heartbeat only — a merge write, so an admin's rename or status change is not clobbered.
@@ -561,6 +604,12 @@ export async function touchDevice(
     isNew: false,
     lastClockSyncAt: existing.lastClockSyncAt ? String(existing.lastClockSyncAt) : undefined,
     clockOffsetMinutes: Number(existing.clockOffsetMinutes) || 0,
+    // `??` not `||`: a learned shift of 0 is the answer for a healthy device, and `||`
+    // would throw it away and re-apply the config guess on every single reply.
+    clockShiftMinutes:
+      existing.clockShiftMinutes === undefined || existing.clockShiftMinutes === null
+        ? clockCompensationMinutes(config)
+        : Number(existing.clockShiftMinutes) || 0,
   };
 }
 
@@ -590,6 +639,14 @@ export const CLOCK_DRIFT_TOLERANCE_MINUTES = 3;
  */
 export const CLOCK_RESYNC_COOLDOWN_MS = 10 * 60 * 1000;
 
+/**
+ * How long an unconfirmed drift reading stays eligible to be the first of a matching pair.
+ *
+ * Long enough to span a quiet morning with only a couple of punches, short enough that a
+ * reading from a fault fixed last week cannot pair with one from today.
+ */
+export const CLOCK_CALIBRATION_WINDOW_MS = 24 * 60 * 60 * 1000;
+
 export async function noticeClockDrift(
   store: DocStore,
   config: IngestConfig,
@@ -615,22 +672,69 @@ export async function noticeClockDrift(
   const shopMs = now.getTime() + config.timezoneOffsetMinutes * 60 * 1000;
   const driftMinutes = Math.round((shopMs - deviceMs) / 60000);
 
-  if (Math.abs(driftMinutes) <= CLOCK_DRIFT_TOLERANCE_MINUTES) return driftMinutes;
+  const id = safeId(serialNumber);
+  const device = await store.get(COLLECTIONS.devices, id);
 
-  /*
-   * Record the drift either way — the number is what makes a wrong clock visible in the app
-   * instead of a mystery at month end. Only arm a re-push if we have not just tried one.
-   */
+  // Record the drift either way — the number is what makes a wrong clock visible in the
+  // app instead of a mystery at month end.
   const patch: DocData = { lastClockDriftMinutes: driftMinutes, updatedAt: nowIso() };
 
-  const device = await store.get(COLLECTIONS.devices, safeId(serialNumber));
+  if (Math.abs(driftMinutes) <= CLOCK_DRIFT_TOLERANCE_MINUTES) {
+    // The clock is right. Abandon any half-finished calibration so a single odd reading
+    // from weeks ago cannot pair with an unrelated one today and move a good clock.
+    if (device?.pendingDriftMinutes !== undefined && device?.pendingDriftMinutes !== null) {
+      patch.pendingDriftMinutes = null;
+    }
+    await store.set(COLLECTIONS.devices, id, patch);
+    return driftMinutes;
+  }
+
+  /*
+   * The clock is wrong. Learn the correction rather than guessing it.
+   *
+   * The terminal displays `Date` header + its own stored timezone, so:
+   *     drift = shopTz − shift − deviceTz
+   * and the shift that drives drift to zero is simply `shift + drift`. That is stable:
+   * once the clock is right the drift is zero and the shift stops moving.
+   *
+   * 🔴 Two agreeing measurements are required before applying it. A terminal that was
+   * offline flushes its stored punches on reconnect, and those carry old timestamps — a
+   * single reading of "three hours behind" may be a replayed buffer, not a wrong clock.
+   * A real timezone error reproduces exactly; a backlog does not.
+   */
+  const previous = device?.pendingDriftMinutes;
+  const pending =
+    previous === undefined || previous === null ? null : Number(previous);
+  const pendingAt = Date.parse(String(device?.pendingDriftAt || '')) || 0;
+  const pendingFresh =
+    pending !== null &&
+    Number.isFinite(pending) &&
+    now.getTime() - pendingAt <= CLOCK_CALIBRATION_WINDOW_MS;
+
+  if (pendingFresh && Math.abs(driftMinutes - (pending as number)) <= CLOCK_DRIFT_TOLERANCE_MINUTES) {
+    const current =
+      device?.clockShiftMinutes === undefined || device?.clockShiftMinutes === null
+        ? clockCompensationMinutes(config)
+        : Number(device.clockShiftMinutes) || 0;
+
+    patch.clockShiftMinutes = Math.max(
+      -CLOCK_SHIFT_LIMIT_MINUTES,
+      Math.min(CLOCK_SHIFT_LIMIT_MINUTES, current + driftMinutes)
+    );
+    patch.clockCalibratedAt = nowIso();
+    patch.pendingDriftMinutes = null;
+  } else {
+    patch.pendingDriftMinutes = driftMinutes;
+    patch.pendingDriftAt = nowIso();
+  }
+
   const lastSync = Date.parse(String(device?.lastClockSyncAt || '')) || 0;
   if (now.getTime() - lastSync >= CLOCK_RESYNC_COOLDOWN_MS) {
     // Clearing the stamp is what arms the next poll to push the time.
     patch.lastClockSyncAt = '';
   }
 
-  await store.set(COLLECTIONS.devices, safeId(serialNumber), patch);
+  await store.set(COLLECTIONS.devices, id, patch);
 
   return driftMinutes;
 }
@@ -1114,6 +1218,25 @@ export async function handleDeviceRequest(
   store: DocStore,
   config: IngestConfig
 ): Promise<DeviceResponse> {
+  /*
+   * The device's learned clock shift is discovered part-way through, but it has to reach
+   * the reply whichever branch returns: every reply carries a `Date` header and the
+   * terminal re-derives its clock from all of them, not just the ones carrying punches.
+   * Collected here rather than threaded through a dozen return statements.
+   */
+  const clock: { shiftMinutes?: number } = {};
+  const response = await routeDeviceRequest(request, store, config, clock);
+  return clock.shiftMinutes === undefined
+    ? response
+    : { ...response, clockShiftMinutes: clock.shiftMinutes };
+}
+
+async function routeDeviceRequest(
+  request: DeviceRequest,
+  store: DocStore,
+  config: IngestConfig,
+  clock: { shiftMinutes?: number }
+): Promise<DeviceResponse> {
   const { method, path, query, body } = request;
   const serialNumber = query.SN || query.sn || '';
   const table = (query.table || '').toUpperCase();
@@ -1174,6 +1297,8 @@ export async function handleDeviceRequest(
   } catch (error) {
     return ok(`Could not record device ${serialNumber}: ${(error as Error).message}`);
   }
+
+  clock.shiftMinutes = device.clockShiftMinutes;
 
   const approved = device.status === 'approved';
   const blocked = device.status === 'blocked';

@@ -38,7 +38,7 @@ interface VercelRequest extends IncomingMessage {
 /** Hard cap so a device sending a wrong Content-Length cannot exhaust the function. */
 const MAX_BODY_BYTES = 2 * 1024 * 1024;
 
-function sendText(res: ServerResponse, body: string): void {
+function sendText(res: ServerResponse, body: string, shiftMinutes?: number): void {
   const payload = Buffer.from(body, 'utf8');
   res.statusCode = 200;
   res.setHeader('Content-Type', 'text/plain; charset=utf-8');
@@ -46,14 +46,15 @@ function sendText(res: ServerResponse, body: string): void {
   // Punch traffic must never be served from a CDN cache.
   res.setHeader('Cache-Control', 'no-store');
   /*
-   * The terminal sets its clock from this header, so it is sent as the plain truth.
+   * The terminal re-derives its displayed clock from this header on every poll, so this
+   * single line decides what time the staff see on the wall.
    *
-   * It used to be shifted forward 30 minutes to compensate for the original unit reading
-   * `TimeZone=5.5` as `5`. That compensation is removed: a terminal that keeps correct time
-   * would be pushed 30 minutes FAST by it, and every punch with it. See
-   * clockCompensationMinutes for the full history before changing this back.
+   * It is the plain truth unless that specific device has earned a correction by drifting
+   * measurably — `handleDeviceRequest` returns the learned value. Do not put a fixed shift
+   * here: one did, for a device whose timezone was already right, and the shop clock ran
+   * 2h30m slow until it was found. See clockCompensationMinutes.
    */
-  res.setHeader('Date', deviceDateHeader(defaultConfig(process.env)));
+  res.setHeader('Date', deviceDateHeader(defaultConfig(process.env), new Date(), shiftMinutes));
   res.end(payload);
 }
 
@@ -128,7 +129,7 @@ export default async function handler(req: VercelRequest, res: ServerResponse): 
     );
 
     if (result.log) console.log(`[iclock] ${result.log}`);
-    sendText(res, result.body);
+    sendText(res, result.body, result.clockShiftMinutes);
   } catch (error) {
     // Compared by name rather than instanceof: the class now lives behind a dynamic import,
     // and if that import is what failed there is no class to compare against.

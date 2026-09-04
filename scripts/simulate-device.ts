@@ -19,6 +19,7 @@ import {
   decodeBody,
   defaultConfig,
   clockCompensationMinutes,
+  CLOCK_SHIFT_LIMIT_MINUTES,
   deviceDateHeader,
   normaliseTimestamp,
   handleDeviceRequest,
@@ -323,32 +324,89 @@ try {
     check('a blocked device stores nothing at all', store.dump(COLLECTIONS.punches).length === beforeBlocked);
   }
 
-  /* ------------------------------------------- 7a. the Date header compensates for the device's timezone */
-  section('7a. The Date header compensates for the device\'s internal timezone');
+  /* ------------------------------------------- 7a. the Date header is the honest time */
+  section('7a. The Date header is the honest time unless a device has earned a shift');
   {
     const india = defaultConfig({});
+    const now = new Date('2026-08-16T19:24:16Z');
 
     /*
-     * The device reads the HTTP `Date` header (UTC) and adds its internal timezone
-     * (+8:00 = 480 min by default). To make it display India time (+5:30 = 330 min),
-     * we shift the header by shopTz − deviceTz = 330 − 480 = −150 minutes.
+     * 🔴 This is the regression that cost two days. The default USED to be −150 minutes,
+     * on the theory that ZKTeco ships from China on +08:00. The replacement terminal's
+     * timezone was already +05:30, so the shift did not correct anything — it dragged the
+     * shop's clock 2h30m BEHIND, and staff read the wrong time off the wall every morning.
+     * The default must be zero: a device that keeps correct time gets the correct time.
      */
-    check('India + default device TZ gives -150 min shift',
-      clockCompensationMinutes(india) === -150,
+    check('the default is no shift at all',
+      clockCompensationMinutes(india) === 0,
       String(clockCompensationMinutes(india)));
 
-    // A device whose internal timezone matches the shop needs no compensation.
-    check('no shift when device TZ matches shop TZ',
-      clockCompensationMinutes(defaultConfig({
-        DEVICE_TZ_OFFSET: '+05:30', DEVICE_INTERNAL_TZ: '+05:30'
-      })) === 0);
-
-    const now = new Date('2026-08-16T19:24:16Z');
-    // With the default −150 min shift, the header should be 2h30m behind UTC.
-    const expected = new Date(now.getTime() - 150 * 60 * 1000);
-    check('the header is shifted by the compensation',
-      new Date(deviceDateHeader(india, now)).getTime() === new Date(expected.toUTCString()).getTime(),
+    check('so the header is the plain truth',
+      new Date(deviceDateHeader(india, now)).getTime() === now.getTime(),
       deviceDateHeader(india, now));
+
+    // The escape hatch still works for a device measured to be on another timezone.
+    const beijing = defaultConfig({ DEVICE_TZ_OFFSET: '+05:30', DEVICE_INTERNAL_TZ: '+08:00' });
+    check('an explicitly declared +08:00 device still gets -150',
+      clockCompensationMinutes(beijing) === -150,
+      String(clockCompensationMinutes(beijing)));
+
+    // A per-device learned value overrides the config, and 0 must not fall back to it.
+    check('a per-device shift overrides the config',
+      new Date(deviceDateHeader(beijing, now, 45)).getTime() === now.getTime() + 45 * 60_000);
+    check('a learned shift of ZERO is honoured, not treated as absent',
+      new Date(deviceDateHeader(beijing, now, 0)).getTime() === now.getTime(),
+      deviceDateHeader(beijing, now, 0));
+
+    // Nothing legitimate exceeds a timezone, so a corrupt value cannot send the clock to Mars.
+    check('an absurd shift is clamped',
+      new Date(deviceDateHeader(india, now, 99_999)).getTime() ===
+        now.getTime() + CLOCK_SHIFT_LIMIT_MINUTES * 60_000);
+  }
+
+  /* ------------------------------------------- 7b. the shift is learned, not guessed */
+  section('7b. A wrong clock is measured and corrected per device');
+  {
+    const india = defaultConfig({});
+    const tzStore = createMemoryStore();
+    const SN = 'SIMTZ0000001';
+    const now = new Date('2026-08-16T19:24:16Z');
+
+    /** What the device would stamp at `at` if its clock were `drift` minutes BEHIND. */
+    const stamp = (drift: number, at: Date) => {
+      const d = new Date(at.getTime() + india.timezoneOffsetMinutes * 60_000 - drift * 60_000);
+      return d.toISOString().slice(0, 19).replace('T', ' ');
+    };
+    const shiftOf = async () =>
+      (await tzStore.get(COLLECTIONS.devices, SN))?.clockShiftMinutes ?? 'unset';
+    const later = (minutes: number) => new Date(now.getTime() + minutes * 60_000);
+
+    // One reading proves nothing: a terminal flushing punches it buffered while offline
+    // looks exactly like a wrong clock, and moving the shop clock on that would be a bug.
+    await noticeClockDrift(tzStore, india, SN, [stamp(150, now)], now);
+    check('a single drift reading does NOT move the clock', (await shiftOf()) === 'unset',
+      String(await shiftOf()));
+
+    // A backlog gives inconsistent readings, so the pair never matches and nothing moves.
+    await noticeClockDrift(tzStore, india, SN, [stamp(37, later(1))], later(1));
+    check('two DISAGREEING readings still do not move it', (await shiftOf()) === 'unset',
+      String(await shiftOf()));
+
+    // A real timezone error reproduces exactly. Two agreeing readings are the proof.
+    await noticeClockDrift(tzStore, india, SN, [stamp(37, later(2))], later(2));
+    check('two AGREEING readings apply the correction', (await shiftOf()) === 37,
+      String(await shiftOf()));
+
+    /*
+     * And it converges. Once the header carries +37, the device stamps correctly, so the
+     * next reading is zero drift and the shift must STAY at 37 — an implementation that
+     * recomputed from the new drift would swing the clock back and oscillate forever.
+     */
+    await noticeClockDrift(tzStore, india, SN, [stamp(0, later(3))], later(3));
+    check('a corrected clock holds its shift instead of oscillating', (await shiftOf()) === 37,
+      String(await shiftOf()));
+    check('and the half-finished calibration is cleared',
+      (await tzStore.get(COLLECTIONS.devices, SN))?.pendingDriftMinutes === null);
   }
 
   /* ------------------------------ 7c. correcting an unfixable clock */
@@ -384,7 +442,7 @@ try {
   }
 
   /* ------------------------------------------------- 7b. clock drift */
-  section('7b. A wrong device clock corrects itself');
+  section('7d. A wrong device clock re-arms the time push');
   {
     const config = defaultConfig({});
 
