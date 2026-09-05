@@ -173,6 +173,34 @@ const Staff = () => {
   }, [staff, attendanceEmployees, attendanceRecords, periodKey]);
 
   /**
+   * Warns before a device number is quietly stolen from somebody else.
+   *
+   * A fingerprint code left over from a deleted employee is easy to miss — deleting a
+   * person here does not touch their `attendanceEmployees` doc (their past attendance and
+   * payroll history has to survive that), so the code still shows as "belonging" to them
+   * until an admin explicitly frees it on Attendance → Employees. Typing that same code
+   * for someone new used to rename the old record silently and with no warning at all.
+   * This is exactly what happened when device 1 moved from "GOVA" to "Ali".
+   */
+  const codeConflict = React.useMemo(() => {
+    const code = formData.attendanceEmpCode.trim();
+    if (!code) return null;
+
+    const claimedBy = attendanceEmployees.find((employee) => employee.empCode === code);
+    if (!claimedBy) return null;
+
+    // Already this person's own code — nothing to warn about.
+    if (editingStaff && claimedBy.linkedStaffId === editingStaff.id) return null;
+
+    const currentName = (claimedBy.name || '').trim();
+    const typedName = formData.name.trim();
+    if (!currentName || currentName === code) return null; // no real name to collide with
+    if (typedName && currentName.toLowerCase() === typedName.toLowerCase()) return null;
+
+    return currentName;
+  }, [formData.attendanceEmpCode, formData.name, attendanceEmployees, editingStaff]);
+
+  /**
    * The pay summary shown on each employee row: the configured rate, and — when their
    * fingerprint records are linked — the days/hours worked this month and what that
    * actually comes to (Req 7).
@@ -901,11 +929,20 @@ const Staff = () => {
                       set it before they have ever punched. Leave it blank and we will match on
                       the name instead.
                     </p>
-                    {formData.attendanceEmpCode && (
-                      <p className="mt-1 text-xs font-medium text-green-700 dark:text-green-400">
-                        Punches from device number {formData.attendanceEmpCode} will count towards
-                        this employee.
+                    {codeConflict ? (
+                      <p className="mt-1 text-xs font-medium text-amber-700 dark:text-amber-400">
+                        ⚠ Device number {formData.attendanceEmpCode} is already on record for
+                        "{codeConflict}". Saving will move it to this employee, and every past
+                        punch under that number will now show under this name. If {codeConflict}{' '}
+                        still works here, pick a different, unused number instead.
                       </p>
+                    ) : (
+                      formData.attendanceEmpCode && (
+                        <p className="mt-1 text-xs font-medium text-green-700 dark:text-green-400">
+                          Punches from device number {formData.attendanceEmpCode} will count
+                          towards this employee.
+                        </p>
+                      )
                     )}
                   </div>
                 </div>

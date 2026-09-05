@@ -186,6 +186,24 @@ export async function syncPayToAttendance(
     salaryAmount: staff.salaryAmount || 0,
     standardHoursPerDay: staff.standardHoursPerDay || 8,
     linkedStaffId: staff.id,
+    /*
+     * 🔴 The name is pushed unconditionally, the same as every other field above.
+     *
+     * The bug this fixes: an admin types a device code that used to belong to somebody
+     * else — the old employee was deleted from the Employees page, which does NOT touch
+     * this attendanceEmployees doc (see the delete note in Staff.tsx). `matchAttendanceEmployee`
+     * still finds that old doc by code and this function used to merge only the pay
+     * fields into it, leaving the PREVIOUS person's name in place forever. Every punch
+     * from the new employee then displayed under the old employee's name, silently and
+     * with no error — exactly what happened when "Ali" was assigned code 1 after "GOVA"
+     * had used it.
+     *
+     * Typing a device code on this page is the admin's explicit statement of who that
+     * code belongs to now, so the name here wins the same way the pay fields already do.
+     * This never fights `applyUserInfoNames` — that guards a different case (the
+     * terminal's own guess at a name), not an admin's deliberate assignment.
+     */
+    name: staff.name || employee?.name || code,
   };
 
   if (employee) {
@@ -200,9 +218,8 @@ export async function syncPayToAttendance(
     await setDoc(
       doc(db, EMPLOYEES_COLLECTION, code),
       {
-        ...payload,
+        ...payload, // name is already in here, computed above
         empCode: code,
-        name: staff.name || code,
         active: true,
         source: 'manual',
         createdAt: new Date().toISOString(),
