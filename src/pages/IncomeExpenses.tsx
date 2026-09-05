@@ -4,7 +4,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Button } from '@/components/ui/button';
 import { DatePicker } from '@/components/ui/date-picker';
-import { X, TrendingUp, TrendingDown, BarChart3, CalendarDays, Calculator, ChevronDown, ChevronRight, HandCoins } from 'lucide-react';
+import { X, TrendingUp, TrendingDown, BarChart3, CalendarDays, Calculator, ChevronDown, ChevronRight, HandCoins, Upload } from 'lucide-react';
 import { Timestamp } from 'firebase/firestore';
 import { toast } from '@/hooks/use-toast';
 import { getFinancialSummary } from '@/utils/financeReports';
@@ -14,6 +14,7 @@ import NetProfitChart from '@/components/income-expenses/NetProfitChart';
 import CategoryBreakdown from '@/components/income-expenses/CategoryBreakdown';
 import AccountsTab from '@/components/income-expenses/AccountsTab';
 import QuickRangeToggle, { QuickRange } from '@/components/QuickRangeToggle';
+import BankStatementImport from '@/components/income-expenses/BankStatementImport';
 
 const IncomeExpenses = () => {
   const [activeTab, setActiveTab] = useState('income');
@@ -23,6 +24,7 @@ const IncomeExpenses = () => {
   const [startDate, setStartDate] = useState<Date | undefined>();
   const [endDate, setEndDate] = useState<Date | undefined>();
   const [loading, setLoading] = useState(false);
+  const [importOpen, setImportOpen] = useState(false);
   // Collapsed by default so small screens keep their vertical space (Req 4)
   const [filtersOpen, setFiltersOpen] = useState(false);
 
@@ -265,6 +267,20 @@ const IncomeExpenses = () => {
           </CardContent>
         )}
       </Card>
+
+      {/* Bank statement import — the one place a whole month arrives at once. */}
+      <div className="flex justify-end">
+        <Button variant="outline" size="sm" onClick={() => setImportOpen(true)}>
+          <Upload className="mr-2 h-4 w-4" />
+          Upload bank statement
+        </Button>
+      </div>
+
+      <BankStatementImport
+        open={importOpen}
+        onOpenChange={setImportOpen}
+        onImported={fetchFinancialData}
+      />
 
       {/* Tabs */}
       <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-4 sm:space-y-6">

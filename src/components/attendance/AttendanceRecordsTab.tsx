@@ -20,6 +20,7 @@ import {
 } from '@/components/ui/table';
 import { Pencil, Plus, Trash2, Search, LogIn, LogOut, Clock, Wallet } from 'lucide-react';
 import { toast } from '@/hooks/use-toast';
+import { useConfirm } from '@/components/ui/confirm-dialog';
 import { deleteRecord, deleteRecords } from '@/utils/attendance/attendanceStore';
 import type {
   AttendanceEmployee,
@@ -66,6 +67,7 @@ const AttendanceRecordsTab: React.FC<AttendanceRecordsTabProps> = ({
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editing, setEditing] = useState<AttendanceRecord | null>(null);
   const [bulkOpen, setBulkOpen] = useState(false);
+  const confirm = useConfirm();
 
   const filtered = useMemo(() => {
     const term = search.trim().toLowerCase();
@@ -131,9 +133,13 @@ const AttendanceRecordsTab: React.FC<AttendanceRecordsTabProps> = ({
   );
 
   const handleDelete = async (record: AttendanceRecord) => {
-    if (!window.confirm(`Delete attendance for ${record.employeeName} on ${formatDate(record.date)}?`)) {
-      return;
-    }
+    const accepted = await confirm({
+      title: `Delete attendance for ${record.employeeName}?`,
+      description: `${formatDate(record.date)}. The raw punches are kept on the Punches tab, so this day can be rebuilt from them.`,
+      confirmLabel: 'Delete day',
+      destructive: true,
+    });
+    if (!accepted) return;
     try {
       await deleteRecord(record.id);
       toast({ title: 'Attendance deleted' });
@@ -258,7 +264,12 @@ const AttendanceRecordsTab: React.FC<AttendanceRecordsTabProps> = ({
         </div>
       </div>
 
-      <Card>
+      {/*
+        On a phone a seven-column table is unreadable however it scrolls, so it is replaced
+        by one card per day below `md`. Same data, same order, laid out down the screen
+        instead of across it.
+      */}
+      <Card className="hidden md:block">
         <CardContent className="p-0">
           <div className="overflow-x-auto">
             <Table>
@@ -392,6 +403,116 @@ const AttendanceRecordsTab: React.FC<AttendanceRecordsTabProps> = ({
           </div>
         </CardContent>
       </Card>
+
+      <div className="flex flex-col gap-3 md:hidden">
+        {loading ? (
+          <p className="py-8 text-center text-sm text-gray-500">Loading attendance…</p>
+        ) : rows.length === 0 ? (
+          <p className="py-8 text-center text-sm text-gray-500">
+            No attendance records for this period.
+          </p>
+        ) : (
+          rows.map(({ record, paidHours, periods, openCheckIn, assumed }) => (
+            <Card key={record.id}>
+              <CardContent className="space-y-3 p-4">
+                <div className="flex items-start justify-between gap-2">
+                  <div className="min-w-0">
+                    <p className="truncate font-semibold text-gray-900 dark:text-gray-100">
+                      {record.employeeName}
+                    </p>
+                    <p className="text-xs text-gray-500">
+                      {record.empCode} · {formatDate(record.date)}
+                    </p>
+                  </div>
+                  <div className="flex shrink-0 gap-1">
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      onClick={() => {
+                        setEditing(record);
+                        setDialogOpen(true);
+                      }}
+                      aria-label={`Edit ${record.employeeName}`}
+                    >
+                      <Pencil className="h-4 w-4" />
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      className="text-red-600 hover:text-red-700"
+                      onClick={() => handleDelete(record)}
+                      aria-label={`Delete ${record.employeeName}`}
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </Button>
+                  </div>
+                </div>
+
+                <div className="rounded-md bg-gray-50 p-2 font-mono text-xs dark:bg-gray-900/60">
+                  {periods.length === 0 && !openCheckIn ? (
+                    <span className="text-gray-500">No periods</span>
+                  ) : (
+                    <div className="flex flex-col gap-0.5">
+                      {periods.map((period, index) => (
+                        <div key={`${period.checkIn}-${index}`}>
+                          <span className="text-gray-400">{index + 1}.</span> {period.checkIn}{' '}
+                          <span className="text-gray-400">→</span> {period.checkOut}
+                        </div>
+                      ))}
+                      {openCheckIn && (
+                        <div className="text-amber-700 dark:text-amber-400">
+                          <span className="opacity-60">{periods.length + 1}.</span> {openCheckIn}{' '}
+                          <span className="opacity-60">→</span> ?
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+
+                <div className="flex items-center justify-between gap-3 text-sm">
+                  <span className="text-gray-500">
+                    In the shop{' '}
+                    <span className="font-medium text-gray-700 dark:text-gray-300">
+                      {record.hoursWorked ? record.hoursWorked.toFixed(2) : '—'}
+                    </span>
+                  </span>
+                  <span className="font-semibold text-emerald-700 dark:text-emerald-400">
+                    Paid {paidHours ? paidHours.toFixed(2) : '—'}
+                  </span>
+                </div>
+
+                <div className="flex flex-wrap gap-1">
+                  {assumed && (
+                    <Badge variant="outline" className="border-gray-300 text-xs text-gray-500">
+                      Repeat presses
+                    </Badge>
+                  )}
+                  {openCheckIn || record.status === 'incomplete' ? (
+                    <Badge variant="outline" className="border-amber-300 bg-amber-50 text-amber-700 dark:bg-amber-950/50 dark:text-amber-300">
+                      No check-out
+                    </Badge>
+                  ) : (
+                    <Badge variant="outline" className="border-green-300 bg-green-50 text-green-700 dark:bg-green-950/50 dark:text-green-300">
+                      Present
+                    </Badge>
+                  )}
+                  {record.manuallyEdited && (
+                    <Badge variant="outline" className="text-xs">Manual</Badge>
+                  )}
+                  {typeof record.overrideHours === 'number' && (
+                    <Badge
+                      variant="outline"
+                      className="border-amber-300 bg-amber-50 text-xs text-amber-700 dark:bg-amber-950/50 dark:text-amber-300"
+                    >
+                      Paid {record.overrideHours} hrs
+                    </Badge>
+                  )}
+                </div>
+              </CardContent>
+            </Card>
+          ))
+        )}
+      </div>
 
       <RecordEditDialog
         settings={settings}

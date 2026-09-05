@@ -109,10 +109,10 @@ const PaymentModeSelector: React.FC<PaymentModeSelectorProps> = ({
 
   const getPaymentColor = (type: string) => {
     switch (type) {
-      case 'cash': return 'bg-green-100 text-green-800';
-      case 'online': return 'bg-blue-100 text-blue-800';
-      case 'split': return 'bg-purple-100 text-purple-800';
-      default: return 'bg-gray-100 text-gray-800 dark:text-gray-200';
+      case 'cash': return 'bg-green-100 text-green-800 dark:bg-green-950/60 dark:text-green-300';
+      case 'online': return 'bg-blue-100 text-blue-800 dark:bg-blue-950/60 dark:text-blue-300';
+      case 'split': return 'bg-purple-100 text-purple-800 dark:bg-purple-950/60 dark:text-purple-300';
+      default: return 'bg-gray-100 text-gray-800 dark:bg-gray-800 dark:text-gray-200';
     }
   };
 
@@ -162,7 +162,7 @@ const PaymentModeSelector: React.FC<PaymentModeSelectorProps> = ({
 
         {/* Payment Breakdown Display */}
         <div className="space-y-3">
-          <div className="flex items-center justify-between p-2 bg-gray-50 rounded-md">
+          <div className="flex items-center justify-between rounded-md bg-gray-50 p-2 dark:bg-gray-900/60">
             <span className="text-sm font-medium">Total Amount:</span>
             <Badge variant="outline" className="font-mono text-sm">
               ₹{totalAmount.toLocaleString()}
@@ -210,21 +210,21 @@ const PaymentModeSelector: React.FC<PaymentModeSelectorProps> = ({
 
           {/* Payment Summary */}
           <div className="grid grid-cols-2 gap-2 pt-2 border-t border-gray-200 dark:border-gray-700">
-            <div className="flex items-center justify-between p-2 bg-green-50 rounded text-xs sm:text-sm">
+            <div className="flex items-center justify-between rounded bg-green-50 p-2 text-xs dark:bg-green-950/40 sm:text-sm">
               <div className="flex items-center gap-1">
                 <Banknote className="h-3 w-3 text-green-600" />
                 <span>Cash</span>
               </div>
-              <span className="font-mono font-medium text-green-700">
+              <span className="font-mono font-medium text-green-700 dark:text-green-400">
                 ₹{(paymentType === 'cash' ? totalAmount : cashAmount).toLocaleString()}
               </span>
             </div>
-            <div className="flex items-center justify-between p-2 bg-blue-50 rounded text-xs sm:text-sm">
+            <div className="flex items-center justify-between rounded bg-blue-50 p-2 text-xs dark:bg-blue-950/40 sm:text-sm">
               <div className="flex items-center gap-1">
                 <CreditCard className="h-3 w-3 text-blue-600" />
                 <span>Online</span>
               </div>
-              <span className="font-mono font-medium text-blue-700">
+              <span className="font-mono font-medium text-blue-700 dark:text-blue-400">
                 ₹{(paymentType === 'online' ? totalAmount : onlineAmount).toLocaleString()}
               </span>
             </div>

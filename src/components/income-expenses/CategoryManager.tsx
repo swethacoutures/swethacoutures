@@ -7,6 +7,7 @@ import { Plus, Tag, X } from 'lucide-react';
 import { collection, addDoc, getDocs, deleteDoc, doc, query, orderBy, where } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 import { toast } from '@/hooks/use-toast';
+import { useConfirm } from '@/components/ui/confirm-dialog';
 
 interface CategoryManagerProps {
   type: 'income' | 'expense';
@@ -24,6 +25,7 @@ interface Category {
 }
 
 const CategoryManager = ({ type, isOpen, onClose, onCategoryAdded }: CategoryManagerProps) => {
+  const confirm = useConfirm();
   const [categories, setCategories] = useState<Category[]>([]);
   const [newCategoryName, setNewCategoryName] = useState('');
   const [isLoading, setIsLoading] = useState(false);
@@ -87,7 +89,13 @@ const CategoryManager = ({ type, isOpen, onClose, onCategoryAdded }: CategoryMan
   };
 
   const handleDeleteCategory = async (categoryId: string, categoryName: string) => {
-    if (window.confirm(`Are you sure you want to delete "${categoryName}"? This action cannot be undone.`)) {
+    const accepted = await confirm({
+      title: `Delete "${categoryName}"?`,
+      description: 'This category will no longer be offered when adding entries. Existing entries keep the category name they were saved with.',
+      confirmLabel: 'Delete category',
+      destructive: true,
+    });
+    if (accepted) {
       try {
         await deleteDoc(doc(db, 'categories', categoryId));
         toast({

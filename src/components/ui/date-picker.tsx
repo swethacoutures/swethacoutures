@@ -25,8 +25,18 @@ export function DatePicker({
   placeholder = "Pick a date",
   className 
 }: DatePickerProps) {
+  /*
+   * Controlled so picking a date closes the calendar.
+   *
+   * Left uncontrolled it stays open over the rest of the form, and inside a dialog it
+   * covers the very fields you are about to fill in — the calendar has to be dismissed by
+   * hunting for a gap to click. Choosing a date IS the end of the interaction, so that is
+   * where it closes; Escape and an outside click still work as they always did.
+   */
+  const [open, setOpen] = React.useState(false)
+
   return (
-    <Popover>
+    <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger asChild>
         <Button
           variant={"outline"}
@@ -47,7 +57,10 @@ export function DatePicker({
         <Calendar
           mode="single"
           selected={date}
-          onSelect={onDateChange}
+          onSelect={(next) => {
+            onDateChange?.(next)
+            setOpen(false)
+          }}
           initialFocus
           className="p-3 pointer-events-auto"
         />

@@ -13,6 +13,9 @@ import { Plus, Users, Clock, CheckCircle, Search, Edit, Trash2, Phone, MessageCi
 import { collection, addDoc, getDocs, updateDoc, deleteDoc, doc, serverTimestamp, query, orderBy, where, onSnapshot } from 'firebase/firestore';
 import { createLoginForOtherUser, db } from '@/lib/firebase';
 import { toast } from '@/hooks/use-toast';
+import { useConfirm } from '@/components/ui/confirm-dialog';
+import { FormSection } from '@/components/ui/form-section';
+import { describeFootprint, purgeEmployee } from '@/utils/attendance/purgeEmployee';
 import { useNavigate } from 'react-router-dom';
 import LoadingSpinner from '@/components/LoadingSpinner';
 import ContactActions from '@/components/ContactActions';
@@ -85,6 +88,7 @@ const PAY_BASIS = {
 const Staff = () => {
   const { userData } = useAuth();
   const navigate = useNavigate();
+  const confirm = useConfirm();
   const [staff, setStaff] = useState<StaffMember[]>([]);
   // Attendance context for the current month — drives the payable-salary column (Req 7)
   const [attendanceEmployees, setAttendanceEmployees] = useState<AttendanceEmployee[]>([]);
@@ -175,12 +179,11 @@ const Staff = () => {
   /**
    * Warns before a device number is quietly stolen from somebody else.
    *
-   * A fingerprint code left over from a deleted employee is easy to miss — deleting a
-   * person here does not touch their `attendanceEmployees` doc (their past attendance and
-   * payroll history has to survive that), so the code still shows as "belonging" to them
-   * until an admin explicitly frees it on Attendance → Employees. Typing that same code
-   * for someone new used to rename the old record silently and with no warning at all.
-   * This is exactly what happened when device 1 moved from "GOVA" to "Ali".
+   * Deleting an employee now frees their code (see `purgeEmployee`), so this fires for the
+   * case that remains: an identity the DEVICE created on its own, before anybody was set
+   * up on the Employees page. Typing that code for someone new used to rename the old
+   * record silently and with no warning at all — which is how device 1 moved from "GOVA"
+   * to "Ali" without a word.
    */
   const codeConflict = React.useMemo(() => {
     const code = formData.attendanceEmpCode.trim();
@@ -580,23 +583,61 @@ const Staff = () => {
     setIsDialogOpen(true);
   };
 
-  const handleDelete = async (staffId: string) => {
-    if (window.confirm('Are you sure you want to delete this employee?')) {
-      try {
-        await deleteDoc(doc(db, 'staff', staffId));
-        toast({
-          title: "Success",
-          description: "Employee deleted successfully",
-        });
-        fetchData();
-      } catch (error) {
-        console.error('Error deleting staff member:', error);
-        toast({
-          title: "Error",
-          description: "Failed to delete employee",
-          variant: "destructive",
-        });
-      }
+  /**
+   * Deletes an employee and every trace of them.
+   *
+   * Counts the attendance footprint FIRST so the confirmation can state exactly what is
+   * about to be destroyed. Deleting only the staff card used to leave the fingerprint
+   * identity behind, which then quietly adopted the next person given that device number.
+   */
+  const handleDelete = async (member: StaffMember) => {
+    const code = (member.attendanceEmpCode || '').trim();
+    const footprint = await describeFootprint({
+      staffId: member.id,
+      empCode: code,
+      name: member.name,
+    }).catch(() => null);
+
+    const lines = footprint
+      ? [
+          footprint.attendanceEmployee
+            ? `• their fingerprint identity (device number ${code})`
+            : null,
+          footprint.records > 0 ? `• ${footprint.records} day record(s) of attendance` : null,
+          footprint.punches > 0 ? `• ${footprint.punches} fingerprint punch(es)` : null,
+          footprint.payments > 0
+            ? `• ${footprint.payments} recorded salary payment(s)`
+            : null,
+        ].filter(Boolean)
+      : [];
+
+    const accepted = await confirm({
+      title: `Delete ${member.name}?`,
+      description:
+        lines.length > 0
+          ? `This permanently removes their employee record and:\n\n${lines.join('\n')}\n\nThe device number ${code} becomes free for someone else. This cannot be undone.`
+          : 'This permanently removes their employee record. This cannot be undone.',
+      confirmLabel: 'Delete everything',
+      destructive: true,
+    });
+
+    if (!accepted) return;
+
+    try {
+      await purgeEmployee({ staffId: member.id, empCode: code, name: member.name });
+      toast({
+        title: 'Employee deleted',
+        description: `${member.name} and all their attendance data have been removed.`,
+      });
+      fetchData();
+      loadAttendance();
+    } catch (error) {
+      console.error('Error deleting staff member:', error);
+      toast({
+        title: 'Error',
+        description: 'Failed to delete employee',
+        variant: 'destructive',
+      });
     }
   };
 
@@ -949,9 +990,10 @@ const Staff = () => {
 
               </div>
 
-              {/* Payment details */}
-              <div className="space-y-4">
-                <h3 className="text-lg font-medium text-gray-900 dark:text-gray-100">Payment Details</h3>
+              <FormSection
+                title="Payment Details"
+                summary={[formData.upiId, formData.bankName, formData.accountNo].filter(Boolean).join(' · ') || 'Not set'}
+              >
                 <div className="form-grid-responsive-3">
                   <div>
                     <Label htmlFor="upiId">UPI ID</Label>
@@ -990,7 +1032,7 @@ const Staff = () => {
                     />
                   </div>
                 </div>
-              </div>
+              </FormSection>
 
               <div>
                 <Label htmlFor="address">Address (Optional)</Label>
@@ -1002,8 +1044,10 @@ const Staff = () => {
                 />
               </div>
 
-              <div className="space-y-4">
-                <h3 className="text-lg font-medium text-gray-900 dark:text-gray-100">Emergency Contact (Optional)</h3>
+              <FormSection
+                title="Emergency Contact"
+                summary={formData.emergencyContactName || 'Not set'}
+              >
                 <div className="form-grid-responsive-3">
                   <div>
                     <Label htmlFor="emergencyContactName">Name</Label>
@@ -1033,7 +1077,7 @@ const Staff = () => {
                     />
                   </div>
                 </div>
-              </div>
+              </FormSection>
 
               <div className="responsive-actions">
                 <Button type="button" variant="outline" onClick={() => setIsDialogOpen(false)} className="btn-responsive">
@@ -1254,7 +1298,7 @@ const Staff = () => {
                         variant="outline" 
                         onClick={(e) => {
                           e.stopPropagation();
-                          handleDelete(member.id);
+                          handleDelete(member);
                         }}
                         className="text-red-600 hover:text-red-700 dark:text-red-400 dark:hover:text-red-500"
                       >
@@ -1341,7 +1385,7 @@ const Staff = () => {
                           variant="outline" 
                           onClick={(e) => {
                             e.stopPropagation();
-                            handleDelete(member.id);
+                            handleDelete(member);
                           }}
                           className="h-8 w-8 p-0 text-red-600 hover:text-red-700 dark:text-red-400 dark:hover:text-red-500"
                         >

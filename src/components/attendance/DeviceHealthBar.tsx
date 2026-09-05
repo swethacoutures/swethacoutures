@@ -11,6 +11,7 @@ import {
   WifiOff,
 } from 'lucide-react';
 import { toast } from '@/hooks/use-toast';
+import { useConfirm } from '@/components/ui/confirm-dialog';
 import { useAuth } from '@/contexts/AuthContext';
 import {
   approveDevice,
@@ -62,6 +63,7 @@ function relativeTime(iso?: string): string {
  */
 const DeviceHealthBar: React.FC<DeviceHealthBarProps> = ({ devices, loading, onChanged }) => {
   const { userData } = useAuth();
+  const confirm = useConfirm();
   const [busySn, setBusySn] = useState<string | null>(null);
 
   const summary = useMemo(
@@ -126,16 +128,15 @@ const DeviceHealthBar: React.FC<DeviceHealthBarProps> = ({ devices, loading, onC
    * are paid for become right, which is the part that decides wages.
    */
   const handleApplyOffset = async (device: AttendanceDevice, minutes: number) => {
-    if (
-      !window.confirm(
-        `Correct every punch from this device by ${minutes > 0 ? "+" : ""}${minutes} minutes?` +
-          `\n\nUse this when the terminal will not keep the right time. The clock on the ` +
-          `wall stays wrong, but the recorded hours become correct.` +
-          `\n\nPunches already saved keep the times they were recorded with.`
-      )
-    ) {
-      return;
-    }
+    const accepted = await confirm({
+      title: `Correct every punch by ${minutes > 0 ? '+' : ''}${minutes} minutes?`,
+      description:
+        'Use this when the terminal will not keep the right time. The clock on the wall ' +
+        'stays wrong, but the recorded hours become correct.\n\n' +
+        'Punches already saved keep the times they were recorded with.',
+      confirmLabel: 'Apply correction',
+    });
+    if (!accepted) return;
 
     setBusySn(device.sn);
     try {
@@ -159,14 +160,14 @@ const DeviceHealthBar: React.FC<DeviceHealthBarProps> = ({ devices, loading, onC
   };
 
   const handleBlock = async (device: AttendanceDevice) => {
-    if (
-      !window.confirm(
-        `Block ${device.name || device.sn}?\n\nIts punches will be discarded on arrival. ` +
-          'Do this for a device you do not recognise.'
-      )
-    ) {
-      return;
-    }
+    const accepted = await confirm({
+      title: `Block ${device.name || device.sn}?`,
+      description:
+        'Its punches will be discarded on arrival. Do this for a device you do not recognise.',
+      confirmLabel: 'Block device',
+      destructive: true,
+    });
+    if (!accepted) return;
 
     setBusySn(device.sn);
     try {

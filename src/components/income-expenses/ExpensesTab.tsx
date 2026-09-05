@@ -12,8 +12,10 @@ import { Plus, Package, Users, DollarSign, Calendar, Tag, Edit2, Trash2, Setting
 import { collection, addDoc, getDocs, query, where, Timestamp, orderBy, updateDoc, deleteDoc, doc } from 'firebase/firestore';
 import { db } from '@/lib/firebase';
 import { toast } from '@/hooks/use-toast';
+import { useConfirm } from '@/components/ui/confirm-dialog';
 import CategoryBreakdown from './CategoryBreakdown';
 import CategoryInput from '../CategoryInput';
+import { FormSection } from '@/components/ui/form-section';
 import PaymentModeSelector, { PaymentBreakdown } from './PaymentModeSelector';
 import { isInRange } from '@/utils/financeReports';
 
@@ -24,6 +26,9 @@ interface ExpensesTabProps {
 }
 
 interface ExpenseEntry {
+  /** Set when the entry came from an uploaded bank statement. */
+  importedFrom?: string;
+  importBatchId?: string;
   id: string;
   expenseName?: string;
   category?: string;
@@ -53,6 +58,7 @@ interface StaffMember {
 }
 
 const ExpensesTab = ({ dateRange, onDataChange, loading }: ExpensesTabProps) => {
+  const confirm = useConfirm();
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [showCategoryBreakdown, setShowCategoryBreakdown] = useState(false);
   const [expenseEntries, setExpenseEntries] = useState<ExpenseEntry[]>([]);
@@ -380,7 +386,13 @@ const ExpensesTab = ({ dateRange, onDataChange, loading }: ExpensesTabProps) => 
       return;
     }
 
-    if (window.confirm('Are you sure you want to delete this expense entry? This action cannot be undone.')) {
+    const accepted = await confirm({
+      title: 'Delete this expense entry?',
+      description: 'It is removed from the expense history and from every total that includes it. This cannot be undone.',
+      confirmLabel: 'Delete entry',
+      destructive: true,
+    });
+    if (accepted) {
       try {
         await deleteDoc(doc(db, 'expenses', entry.id));
         toast({
@@ -544,7 +556,10 @@ const ExpensesTab = ({ dateRange, onDataChange, loading }: ExpensesTabProps) => 
                 </div>
                 
                 {/* Payment Mode Selector - Make responsive */}
-                <div className="border-t pt-3 sm:pt-4">
+                <FormSection
+                  title="Payment Mode"
+                  summary={formData.paymentMode === 'cash' ? 'Cash' : formData.paymentMode === 'online' ? 'Online (UPI/Card/Bank)' : 'Split'}
+                >
                   <PaymentModeSelector
                     totalAmount={formData.amount}
                     onPaymentChange={(breakdown) => {
@@ -567,10 +582,12 @@ const ExpensesTab = ({ dateRange, onDataChange, loading }: ExpensesTabProps) => 
                     title="Payment Mode"
                     description="How was this expense paid?"
                   />
-                </div>
+                </FormSection>
                 
-                <div>
-                  <Label htmlFor="notes" className="text-sm font-medium">Notes (Optional)</Label>
+                <FormSection
+                  title="Notes"
+                  summary={formData.notes ? formData.notes.slice(0, 60) : 'None'}
+                >
                   <Textarea
                     id="notes"
                     value={formData.notes}
@@ -579,7 +596,7 @@ const ExpensesTab = ({ dateRange, onDataChange, loading }: ExpensesTabProps) => 
                     rows={2}
                     className="mt-1 resize-none"
                   />
-                </div>
+                </FormSection>
                 
                 <div className="flex flex-col sm:flex-row justify-end gap-2 sm:gap-3 pt-3 border-t">
                   <Button 
@@ -635,6 +652,14 @@ const ExpensesTab = ({ dateRange, onDataChange, loading }: ExpensesTabProps) => 
                         {entry.type === 'inventory' ? entry.itemName : 
                          entry.type === 'salary' ? `${entry.staffName} Salary` : 
                          entry.expenseName || 'Expense'}
+                        {entry.importedFrom && (
+                          <span
+                            className="ml-2 rounded bg-violet-100 px-1.5 py-0.5 text-[11px] font-normal text-violet-800 dark:bg-violet-900/40 dark:text-violet-300"
+                            title={`Imported from ${entry.importedFrom}`}
+                          >
+                            Imported
+                          </span>
+                        )}
                       </div>
                       <div className="text-sm text-gray-600 flex items-center space-x-4">
                         {entry.supplier && (

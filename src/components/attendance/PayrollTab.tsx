@@ -10,10 +10,18 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
-import { ChevronLeft, ChevronRight, Check, Undo2, Download, Wallet, Settings2 } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Undo2, Download, Wallet, Settings2, IndianRupee } from 'lucide-react';
 import { toast } from '@/hooks/use-toast';
 import { useAuth } from '@/contexts/AuthContext';
-import { fetchPayments, markPaid, undoPayment } from '@/utils/attendance/attendanceStore';
+import { fetchPayments } from '@/utils/attendance/attendanceStore';
+import {
+  fetchSettlements,
+  revertSettlement,
+  settledInRange,
+  type SalarySettlement,
+} from '@/utils/attendance/settlementStore';
+import SettlementDialog from './SettlementDialog';
+import { useConfirm } from '@/components/ui/confirm-dialog';
 import {
   calculateSalary,
   formatCurrency,
@@ -52,15 +60,23 @@ const PayrollTab: React.FC<PayrollTabProps> = ({
   onEditSettings,
 }) => {
   const { userData } = useAuth();
+  const confirm = useConfirm();
   const [periodKey, setPeriodKey] = useState(() => toMonthKey(new Date()));
   const [payments, setPayments] = useState<SalaryPayment[]>([]);
+  const [settlements, setSettlements] = useState<SalarySettlement[]>([]);
   const [busyCode, setBusyCode] = useState<string | null>(null);
+  const [settling, setSettling] = useState<AttendanceEmployee | null>(null);
 
   const { start, end } = useMemo(() => monthBounds(periodKey), [periodKey]);
 
   const loadPayments = useCallback(async () => {
     try {
-      setPayments(await fetchPayments(periodKey));
+      const [monthly, settled] = await Promise.all([
+        fetchPayments(periodKey),
+        fetchSettlements(),
+      ]);
+      setPayments(monthly);
+      setSettlements(settled);
     } catch (error) {
       toast({
         title: 'Could not load payments',
@@ -85,12 +101,27 @@ const PayrollTab: React.FC<PayrollTabProps> = ({
     () =>
       employees
         .filter((employee) => employee.active !== false)
-        .map((employee) => ({
-          employee,
-          breakdown: calculateSalary(employee, allRecords, start, end, settings),
-          payment: paymentByCode.get(employee.empCode),
-        })),
-    [employees, allRecords, start, end, paymentByCode, settings]
+        .map((employee) => {
+          const breakdown = calculateSalary(employee, allRecords, start, end, settings);
+          /*
+           * What has been settled INSIDE this month, from the settlement log. A legacy
+           * whole-month payment from the old one-payment-per-month model still counts, so
+           * months paid before settlements existed do not suddenly read as unpaid.
+           */
+          const legacy = paymentByCode.get(employee.empCode);
+          const settled =
+            settledInRange(settlements, employee.empCode, start, end) +
+            (legacy?.status === 'paid' ? legacy.amount || 0 : 0);
+
+          return {
+            employee,
+            breakdown,
+            payment: legacy,
+            settled: Math.round(settled * 100) / 100,
+            outstanding: Math.round((breakdown.amount - settled) * 100) / 100,
+          };
+        }),
+    [employees, allRecords, start, end, paymentByCode, settlements, settings]
   );
 
   /**
@@ -121,96 +152,42 @@ const PayrollTab: React.FC<PayrollTabProps> = ({
 
   const totals = useMemo(() => {
     const payable = rows.reduce((sum, row) => sum + row.breakdown.amount, 0);
-    const paid = rows.reduce(
-      (sum, row) => sum + (row.payment?.status === 'paid' ? row.payment.amount : 0),
-      0
-    );
+    const paid = rows.reduce((sum, row) => sum + row.settled, 0);
     return { payable, paid, pending: payable - paid };
   }, [rows]);
 
-  const handleMarkPaid = async (row: (typeof rows)[number]) => {
-    if (row.breakdown.needsSetup) {
-      toast({
-        title: 'Set a salary first',
-        description: `${row.employee.name} has no pay basis configured.`,
-        variant: 'destructive',
-      });
-      return;
-    }
+  /** Undoes one settlement, after a styled confirmation rather than a browser box. */
+  const handleUndoSettlement = async (settlement: SalarySettlement) => {
+    const accepted = await confirm({
+      title: `Undo this ${formatCurrency(settlement.amount)} settlement?`,
+      description:
+        `${settlement.employeeName}, ${settlement.periodStart} to ${settlement.periodEnd}.
 
-    // Zero is a real answer for someone who did not turn up, but it is also what a broken
-    // link or a missing month of records looks like. Worth one question before recording it.
-    if (
-      row.breakdown.amount <= 0 &&
-      !window.confirm(
-        `${row.employee.name} works out to ₹0 for ${formatMonthLabel(periodKey)} — ` +
-          `${row.breakdown.daysWorked} day(s) present.\n\nRecord a ₹0 payment anyway?`
-      )
-    ) {
-      return;
-    }
+` +
+        'The amount becomes payable again. The original entry stays on the record marked ' +
+        'as undone, and the change is written to the activity log.',
+      confirmLabel: 'Undo settlement',
+      destructive: true,
+    });
+    if (!accepted) return;
 
-    setBusyCode(row.employee.empCode);
+    setBusyCode(settlement.empCode);
     try {
-      await markPaid({
-        empCode: row.employee.empCode,
-        employeeName: row.employee.name,
-        periodKey,
-        periodStart: start,
-        periodEnd: end,
-        amount: row.breakdown.amount,
-        daysWorked: row.breakdown.daysWorked,
-        hoursWorked: row.breakdown.hoursWorked,
-        salaryMode: row.employee.salaryMode,
-        paidBy: userData?.name || userData?.email || 'admin',
-      });
-      toast({
-        title: 'Marked as paid',
-        description: `${row.employee.name} — ${formatCurrency(row.breakdown.amount)}`,
-      });
-      await loadPayments();
-    } catch (error) {
-      toast({
-        title: 'Could not mark paid',
-        description: error instanceof Error ? error.message : 'Unknown error',
-        variant: 'destructive',
-      });
-    } finally {
-      setBusyCode(null);
-    }
-  };
+      await revertSettlement(settlement, userData?.name || userData?.email || 'admin');
 
-  const handleUndo = async (row: (typeof rows)[number]) => {
-    if (
-      !window.confirm(
-        `Undo the ${formatMonthLabel(periodKey)} payment for ${row.employee.name}?\n\n` +
-          `They will show as payable again. The original payment stays on the record as ` +
-          `reverted, and the change is written to the activity log.`
-      )
-    ) {
-      return;
-    }
-
-    setBusyCode(row.employee.empCode);
-    try {
-      await undoPayment(row.employee.empCode, periodKey, userData?.name || userData?.email || 'admin');
-
-      /**
-       * Flip the row locally before re-reading.
-       *
-       * Firestore serves this read from its own cache a beat after the write lands, and on
-       * a slow connection the row would otherwise sit there still saying "Paid" — which
-       * reads exactly like the undo having failed, and invites a second click.
+      /*
+       * Flip it locally before re-reading. Firestore serves this read from its own cache a
+       * beat after the write lands, and on a slow connection the row would otherwise still
+       * say "paid" — which reads exactly like the undo having failed, and invites a second
+       * click.
        */
-      setPayments((current) =>
-        current.map((payment) =>
-          payment.empCode === row.employee.empCode
-            ? { ...payment, status: 'reverted' as const }
-            : payment
+      setSettlements((current) =>
+        current.map((entry) =>
+          entry.id === settlement.id ? { ...entry, status: 'reverted' as const } : entry
         )
       );
 
-      toast({ title: 'Payment undone', description: `${row.employee.name} is payable again.` });
+      toast({ title: 'Settlement undone', description: `${settlement.employeeName} is payable again.` });
       await loadPayments();
     } catch (error) {
       toast({
@@ -218,12 +195,17 @@ const PayrollTab: React.FC<PayrollTabProps> = ({
         description: error instanceof Error ? error.message : 'Unknown error',
         variant: 'destructive',
       });
-      // The optimistic flip must not survive a failure, or the table would lie.
-      await loadPayments();
     } finally {
       setBusyCode(null);
     }
   };
+
+  /** Settlements that touch the month on screen, newest first. */
+  const monthSettlements = useMemo(
+    () =>
+      settlements.filter((entry) => entry.periodStart <= end && entry.periodEnd >= start),
+    [settlements, start, end]
+  );
 
   const handleExport = async () => {
     if (rows.length === 0) {
@@ -347,7 +329,8 @@ const PayrollTab: React.FC<PayrollTabProps> = ({
         </div>
       )}
 
-      <Card>
+      {/* Below `md` the eight-column payroll table becomes one card per employee. */}
+      <Card className="hidden md:block">
         <CardContent className="p-0">
           <div className="overflow-x-auto">
             <Table>
@@ -376,7 +359,6 @@ const PayrollTab: React.FC<PayrollTabProps> = ({
                   </TableRow>
                 ) : (
                   rows.map((row) => {
-                    const isPaid = row.payment?.status === 'paid';
                     const busy = busyCode === row.employee.empCode;
                     return (
                       <TableRow key={row.employee.empCode}>
@@ -423,41 +405,26 @@ const PayrollTab: React.FC<PayrollTabProps> = ({
                           )}
                         </TableCell>
                         <TableCell className="text-right">
-                          {isPaid ? (
-                            <div className="flex items-center justify-end gap-2">
-                              <Badge className="bg-green-600 hover:bg-green-600">
-                                <Check className="mr-1 h-3 w-3" />
-                                Paid {formatCurrency(row.payment!.amount)}
-                              </Badge>
-                              <Button
-                                size="sm"
-                                variant="ghost"
-                                disabled={busy}
-                                onClick={() => handleUndo(row)}
-                                title="Undo this payment"
-                                aria-label={`Undo payment for ${row.employee.name}`}
-                              >
-                                <Undo2 className="h-4 w-4" />
-                              </Button>
-                            </div>
-                          ) : (
-                            <div className="flex flex-col items-end gap-1">
-                              <Button
-                                size="sm"
-                                disabled={busy || row.breakdown.needsSetup}
-                                onClick={() => handleMarkPaid(row)}
-                              >
-                                {busy ? 'Saving…' : 'Mark paid'}
-                              </Button>
-                              {/* Says the undo worked, and leaves the accidental click visible
-                                  instead of quietly pretending it never happened. */}
-                              {row.payment?.status === 'reverted' && (
-                                <span className="text-[0.68rem] text-amber-600 dark:text-amber-400">
-                                  Undone — was {formatCurrency(row.payment.amount || 0)}
-                                </span>
-                              )}
-                            </div>
-                          )}
+                          <div className="flex flex-col items-end gap-1">
+                            <Button
+                              size="sm"
+                              disabled={busy || row.breakdown.needsSetup}
+                              onClick={() => setSettling(row.employee)}
+                            >
+                              <IndianRupee className="mr-1 h-3.5 w-3.5" />
+                              Settle
+                            </Button>
+                            {row.settled > 0 && (
+                              <span className="text-[0.68rem] text-gray-500">
+                                Paid {formatCurrency(row.settled)}
+                              </span>
+                            )}
+                            {row.outstanding > 0.005 && row.settled > 0 && (
+                              <span className="text-[0.68rem] font-medium text-amber-600 dark:text-amber-400">
+                                {formatCurrency(row.outstanding)} left
+                              </span>
+                            )}
+                          </div>
                         </TableCell>
                       </TableRow>
                     );
@@ -468,6 +435,163 @@ const PayrollTab: React.FC<PayrollTabProps> = ({
           </div>
         </CardContent>
       </Card>
+
+      <div className="flex flex-col gap-3 md:hidden">
+        {rows.length === 0 ? (
+          <p className="py-8 text-center text-sm text-gray-500">No active employees.</p>
+        ) : (
+          rows.map((row) => (
+            <Card key={row.employee.empCode}>
+              <CardContent className="space-y-3 p-4">
+                <div className="flex items-start justify-between gap-2">
+                  <div className="min-w-0">
+                    <p className="truncate font-semibold text-gray-900 dark:text-gray-100">
+                      {row.employee.name}
+                    </p>
+                    <p className="text-xs text-gray-500">Code {row.employee.empCode}</p>
+                  </div>
+                  {row.breakdown.needsSetup ? (
+                    <Badge
+                      variant="outline"
+                      className="shrink-0 border-amber-300 bg-amber-50 text-amber-700 dark:bg-amber-950/50 dark:text-amber-300"
+                    >
+                      Needs setup
+                    </Badge>
+                  ) : (
+                    <span className="shrink-0 text-base font-bold text-gray-900 dark:text-gray-100">
+                      {formatCurrency(row.breakdown.amount)}
+                    </span>
+                  )}
+                </div>
+
+                <div className="grid grid-cols-3 gap-2 text-xs">
+                  <div>
+                    <p className="text-gray-500">Days</p>
+                    <p className="font-medium text-gray-900 dark:text-gray-100">
+                      {row.breakdown.daysWorked}
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-gray-500">Hours</p>
+                    <p className="font-medium text-gray-900 dark:text-gray-100">
+                      {row.breakdown.paidHours}
+                      <span className="text-gray-500"> / {row.breakdown.expectedHours}</span>
+                    </p>
+                  </div>
+                  <div>
+                    <p className="text-gray-500">Overtime</p>
+                    <p className="font-medium text-amber-700 dark:text-amber-400">
+                      {row.breakdown.overtimeHours > 0 ? `+${row.breakdown.overtimeHours}` : '—'}
+                    </p>
+                  </div>
+                </div>
+
+                {row.breakdown.formula && (
+                  <p className="text-xs text-gray-500">{row.breakdown.formula}</p>
+                )}
+
+                <div className="flex items-center justify-between gap-2 border-t border-gray-100 pt-3 dark:border-gray-800">
+                  <div className="text-xs">
+                    {row.settled > 0 && (
+                      <span className="text-gray-500">Paid {formatCurrency(row.settled)}</span>
+                    )}
+                    {row.outstanding > 0.005 && row.settled > 0 && (
+                      <span className="ml-2 font-medium text-amber-600 dark:text-amber-400">
+                        {formatCurrency(row.outstanding)} left
+                      </span>
+                    )}
+                  </div>
+                  <Button
+                    size="sm"
+                    disabled={busyCode === row.employee.empCode || row.breakdown.needsSetup}
+                    onClick={() => setSettling(row.employee)}
+                  >
+                    <IndianRupee className="mr-1 h-3.5 w-3.5" />
+                    Settle
+                  </Button>
+                </div>
+              </CardContent>
+            </Card>
+          ))
+        )}
+      </div>
+
+      {/* Every settlement that touches this month — weekly payments, advances, the lot. */}
+      {monthSettlements.length > 0 && (
+        <Card>
+          <CardContent className="p-4">
+            <p className="mb-3 text-sm font-semibold text-gray-900 dark:text-gray-100">
+              Settlements this period
+            </p>
+            <div className="flex flex-col gap-2">
+              {monthSettlements.map((entry) => {
+                const reverted = entry.status === 'reverted';
+                return (
+                  <div
+                    key={entry.id}
+                    className={`flex flex-wrap items-center justify-between gap-2 rounded-lg border p-3 ${
+                      reverted
+                        ? 'border-dashed border-gray-300 opacity-70 dark:border-gray-700'
+                        : 'border-gray-200 dark:border-gray-800'
+                    }`}
+                  >
+                    <div className="min-w-0">
+                      <p className="text-sm font-medium text-gray-900 dark:text-gray-100">
+                        {entry.employeeName}
+                        {reverted && (
+                          <Badge variant="outline" className="ml-2 text-[0.65rem]">
+                            Undone
+                          </Badge>
+                        )}
+                      </p>
+                      <p className="text-xs text-gray-500">
+                        {entry.periodStart} → {entry.periodEnd}
+                        {entry.amount < entry.earned ? ' · part payment' : ''}
+                        {entry.note ? ` · ${entry.note}` : ''}
+                      </p>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span
+                        className={`text-sm font-semibold ${
+                          reverted
+                            ? 'text-gray-400 line-through'
+                            : 'text-emerald-700 dark:text-emerald-400'
+                        }`}
+                      >
+                        {formatCurrency(entry.amount)}
+                      </span>
+                      {!reverted && (
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          disabled={busyCode === entry.empCode}
+                          onClick={() => handleUndoSettlement(entry)}
+                          title="Undo this settlement"
+                          aria-label={`Undo settlement for ${entry.employeeName}`}
+                        >
+                          <Undo2 className="h-4 w-4" />
+                        </Button>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      <SettlementDialog
+        open={settling !== null}
+        onOpenChange={(open) => !open && setSettling(null)}
+        employee={settling}
+        records={allRecords}
+        settlements={settlements}
+        settings={settings}
+        paidBy={userData?.name || userData?.email || 'admin'}
+        onNeedRange={onNeedRange}
+        onSaved={loadPayments}
+      />
 
       <p className="text-xs text-gray-500">
         Monthly salaries are paid by the hour: salary ÷ (working days × {settings.standardHoursPerDay} hrs)

@@ -13,7 +13,8 @@ import {
 } from '@/components/ui/table';
 import { Trash2, Fingerprint, Download, Link2, ExternalLink } from 'lucide-react';
 import { toast } from '@/hooks/use-toast';
-import { deleteEmployee } from '@/utils/attendance/attendanceStore';
+import { useConfirm } from '@/components/ui/confirm-dialog';
+import { describeFootprint, purgeEmployee } from '@/utils/attendance/purgeEmployee';
 import { requestNamesFromDevice } from '@/utils/attendance/deviceStore';
 import { formatCurrency } from '@/utils/attendance/salaryCalc';
 import type { AttendanceDevice, AttendanceEmployee, SalaryMode } from '@/utils/attendance/types';
@@ -47,6 +48,7 @@ const EmployeesTab: React.FC<EmployeesTabProps> = ({
   loading,
   onChanged,
 }) => {
+  const confirm = useConfirm();
   const navigate = useNavigate();
   const [dialogOpen, setDialogOpen] = useState(false);
   const [fetchingNames, setFetchingNames] = useState(false);
@@ -95,18 +97,50 @@ const EmployeesTab: React.FC<EmployeesTabProps> = ({
 
   const needsSetup = employees.filter((employee) => !employee.salaryMode || !employee.salaryAmount);
 
+  /**
+   * Removes the fingerprint identity and everything recorded under it.
+   *
+   * This used to keep the day records and punches "for history", which sounds careful and
+   * was not: the code stayed occupied, the person kept appearing on the dashboard, and the
+   * next employee given that number inherited their punches. A delete here now means gone.
+   */
   const handleDelete = async (employee: AttendanceEmployee) => {
-    if (
-      !window.confirm(
-        `Remove ${employee.name} from attendance?\n\nTheir past attendance records are kept. ` +
-          `If they punch in again, they will be re-added automatically.`
-      )
-    ) {
-      return;
-    }
+    const footprint = await describeFootprint({
+      empCode: employee.empCode,
+      name: employee.name,
+    }).catch(() => null);
+
+    const lines = footprint
+      ? [
+          footprint.records > 0 ? `• ${footprint.records} day record(s) of attendance` : null,
+          footprint.punches > 0 ? `• ${footprint.punches} fingerprint punch(es)` : null,
+          footprint.payments > 0 ? `• ${footprint.payments} recorded salary payment(s)` : null,
+        ].filter(Boolean)
+      : [];
+
+    const accepted = await confirm({
+      title: `Delete ${employee.name} from attendance?`,
+      description:
+        (lines.length > 0
+          ? `This permanently removes:\n\n${lines.join('\n')}\n\n`
+          : 'This permanently removes their fingerprint identity.\n\n') +
+        `Device number ${employee.empCode} becomes free for someone else. This cannot be undone.`,
+      confirmLabel: 'Delete everything',
+      destructive: true,
+    });
+
+    if (!accepted) return;
+
     try {
-      await deleteEmployee(employee.empCode);
-      toast({ title: 'Employee removed' });
+      await purgeEmployee({
+        empCode: employee.empCode,
+        name: employee.name,
+        staffId: employee.linkedStaffId,
+      });
+      toast({
+        title: 'Employee removed',
+        description: `${employee.name} and all their attendance data have been deleted.`,
+      });
       onChanged();
     } catch (error) {
       toast({
@@ -169,7 +203,8 @@ const EmployeesTab: React.FC<EmployeesTabProps> = ({
         </div>
       </div>
 
-      <Card>
+      {/* Below `md` the six-column table becomes one card per employee. */}
+      <Card className="hidden md:block">
         <CardContent className="p-0">
           <div className="overflow-x-auto">
             <Table>
@@ -286,6 +321,101 @@ const EmployeesTab: React.FC<EmployeesTabProps> = ({
           </div>
         </CardContent>
       </Card>
+
+      <div className="flex flex-col gap-3 md:hidden">
+        {loading ? (
+          <p className="py-8 text-center text-sm text-gray-500">Loading employees…</p>
+        ) : employees.length === 0 ? (
+          <p className="py-8 text-center text-sm text-gray-500">No employees yet.</p>
+        ) : (
+          employees.map((employee) => {
+            const unset = !employee.salaryMode || !employee.salaryAmount;
+            return (
+              <Card
+                key={employee.empCode}
+                className={employee.active === false ? 'opacity-50' : ''}
+              >
+                <CardContent className="space-y-3 p-4">
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="min-w-0">
+                      <p className="truncate font-semibold text-gray-900 dark:text-gray-100">
+                        {employee.name}
+                      </p>
+                      <p className="text-xs text-gray-500">
+                        Code {employee.empCode}
+                        {employee.department ? ` · ${employee.department}` : ''}
+                      </p>
+                      <div className="mt-1 flex items-center gap-1 text-xs">
+                        <Link2 className="h-3 w-3 shrink-0 text-gray-400" />
+                        {staffById.get(employee.linkedStaffId || '') ? (
+                          <span className="text-green-700 dark:text-green-400">
+                            {staffById.get(employee.linkedStaffId || '')}
+                          </span>
+                        ) : (
+                          <span className="text-gray-400">Not linked to a staff member</span>
+                        )}
+                      </div>
+                    </div>
+                    <div className="flex shrink-0 gap-1">
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        aria-label={`Link ${employee.name}`}
+                        onClick={() => {
+                          setEditing(employee);
+                          setDialogOpen(true);
+                        }}
+                      >
+                        <Link2 className="h-4 w-4" />
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        className="text-red-600 hover:text-red-700"
+                        aria-label={`Delete ${employee.name}`}
+                        onClick={() => handleDelete(employee)}
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </Button>
+                    </div>
+                  </div>
+
+                  <div className="flex flex-wrap items-center justify-between gap-2 text-sm">
+                    {unset ? (
+                      <Badge
+                        variant="outline"
+                        className="border-amber-300 bg-amber-50 text-amber-700 dark:bg-amber-950/50 dark:text-amber-300"
+                      >
+                        Not connected
+                      </Badge>
+                    ) : (
+                      <span className="text-gray-600 dark:text-gray-400">
+                        {MODE_LABEL[employee.salaryMode!]} ·{' '}
+                        <span className="font-semibold text-gray-900 dark:text-gray-100">
+                          {formatCurrency(employee.salaryAmount)}
+                          {MODE_SUFFIX[employee.salaryMode!]}
+                        </span>
+                      </span>
+                    )}
+                    <span className="text-xs text-gray-500">
+                      {employee.standardHoursPerDay ?? 8} hrs/day
+                    </span>
+                  </div>
+
+                  <div className="flex flex-wrap gap-1">
+                    <Badge variant="outline" className="text-xs">
+                      {employee.source === 'device' ? 'Fingerprint' : 'Manual'}
+                    </Badge>
+                    {employee.active === false && (
+                      <Badge variant="outline" className="text-xs">Inactive</Badge>
+                    )}
+                  </div>
+                </CardContent>
+              </Card>
+            );
+          })
+        )}
+      </div>
 
       <EmployeeSalaryDialog
         open={dialogOpen}

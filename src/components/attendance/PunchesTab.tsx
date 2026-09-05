@@ -21,6 +21,7 @@ import {
 import { Download, Fingerprint, LogIn, LogOut, Search, Trash2 } from 'lucide-react';
 import { saveAs } from 'file-saver';
 import { toast } from '@/hooks/use-toast';
+import { useConfirm } from '@/components/ui/confirm-dialog';
 import { deletePunch, deletePunches } from '@/utils/attendance/deviceStore';
 import type { AttendanceEmployee, DevicePunch } from '@/utils/attendance/types';
 import BulkDeleteDialog, { type DeleteScope } from './BulkDeleteDialog';
@@ -101,19 +102,19 @@ const PunchesTab: React.FC<PunchesTabProps> = ({
 }) => {
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [bulkOpen, setBulkOpen] = useState(false);
+  const confirm = useConfirm();
 
   const handleDelete = async (punch: DevicePunch) => {
-    if (
-      !window.confirm(
-        `Delete the punch for ${punch.employeeName || punch.userPin} at ${punch.punchTimeLocal}?
-
-` +
-          'The day record on the Records tab is not changed — correct that separately if the ' +
-          'hours are now wrong. This deletion is recorded in the activity log.'
-      )
-    ) {
-      return;
-    }
+    const accepted = await confirm({
+      title: `Delete the punch at ${punch.punchTimeLocal}?`,
+      description:
+        `${punch.employeeName || punch.userPin}. The day record on the Records tab is not ` +
+        'changed — correct that separately if the hours are now wrong. This deletion is ' +
+        'recorded in the activity log.',
+      confirmLabel: 'Delete punch',
+      destructive: true,
+    });
+    if (!accepted) return;
 
     setDeletingId(punch.id);
     try {
@@ -335,7 +336,8 @@ const PunchesTab: React.FC<PunchesTabProps> = ({
         </Button>
       </div>
 
-      <Card>
+      {/* Below `md` the six-column table becomes one card per press. */}
+      <Card className="hidden md:block">
         <CardContent className="p-0">
           <div className="overflow-x-auto">
             <Table>
@@ -425,6 +427,52 @@ const PunchesTab: React.FC<PunchesTabProps> = ({
         check-in and check-out per day, which is what Payroll uses. A punch marked “Held” arrived
         while its device was still awaiting approval.
       </p>
+
+      <div className="flex flex-col gap-2 md:hidden">
+        {loading ? (
+          <p className="py-8 text-center text-sm text-gray-500">Loading punches…</p>
+        ) : filtered.length === 0 ? (
+          <p className="py-8 text-center text-sm text-gray-500">No punches for this period.</p>
+        ) : (
+          filtered.map((punch) => (
+            <Card key={punch.id}>
+              <CardContent className="flex items-center justify-between gap-3 p-3">
+                <div className="min-w-0">
+                  <p className="truncate text-sm font-medium text-gray-900 dark:text-gray-100">
+                    {punch.employeeName || punch.userPin}
+                  </p>
+                  <p className="font-mono text-xs text-gray-500">
+                    {formatDate(punch.punchDate)} · {timeOf(punch)}
+                  </p>
+                  <div className="mt-1 flex flex-wrap gap-1">
+                    <Badge variant="outline" className={ROLE_BADGE[roleOf(punch)].className}>
+                      {ROLE_BADGE[roleOf(punch)].label}
+                    </Badge>
+                    {punch.parked && (
+                      <Badge
+                        variant="outline"
+                        className="border-amber-300 bg-amber-50 text-amber-700 dark:bg-amber-950/50 dark:text-amber-300"
+                      >
+                        Held
+                      </Badge>
+                    )}
+                  </div>
+                </div>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  className="shrink-0 text-red-600 hover:text-red-700"
+                  disabled={deletingId === punch.id}
+                  onClick={() => handleDelete(punch)}
+                  aria-label={`Delete punch at ${timeOf(punch)}`}
+                >
+                  <Trash2 className="h-4 w-4" />
+                </Button>
+              </CardContent>
+            </Card>
+          ))
+        )}
+      </div>
 
       <BulkDeleteDialog
         open={bulkOpen}

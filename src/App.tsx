@@ -33,11 +33,13 @@ import StaffAlterationsView from './components/StaffAlterationsView';
 import Backup from './pages/Backup';
 import BackupReminderDialog from '@/components/backup/BackupReminderDialog';
 import { BusinessSettingsProvider } from '@/components/BusinessSettingsProvider';
+import { ConfirmProvider } from '@/components/ui/confirm-dialog';
 
 function App() {
   return (
     <Router>
       <BusinessSettingsProvider>
+        <ConfirmProvider>
         <div className="min-h-screen bg-gray-50 dark:bg-gray-800/50">
           <Routes>
             {/* The public website. Everything below it is the back office. */}
@@ -354,6 +356,7 @@ function App() {
           {/* Sits outside <Routes> so the backup nag follows the admin across every page. */}
           <BackupReminderDialog />
         </div>
+        </ConfirmProvider>
       </BusinessSettingsProvider>
     </Router>
   );
