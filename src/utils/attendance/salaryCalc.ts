@@ -2,6 +2,7 @@
  * Salary maths. Pure functions only — no Firestore, no React — so the money logic
  * can be reasoned about and tested in isolation from the UI that displays it.
  */
+import { buildDayTimeline } from './punchSessions';
 import {
   DEFAULT_ATTENDANCE_SETTINGS,
   type AttendanceEmployee,
@@ -21,9 +22,20 @@ export interface SalaryBreakdown {
   expectedHours: number;
   /** salaryAmount / expectedHours. Shown so the number can be checked by hand. */
   hourlyRate: number;
-  /** Hours worked beyond a full month, paid at the same rate. */
+  /**
+   * Hours worked beyond the employee's standard day, summed across the period.
+   *
+   * Counted a day at a time so a late evening is actually visible, instead of netting
+   * itself out against a short day later in the month.
+   */
   overtimeHours: number;
-  /** What the overtime hours are worth. Already included in `amount`. */
+  /** How many separate days ran long. What the payroll banner counts. */
+  overtimeDays: number;
+  /**
+   * What the overtime hours are worth, at the same hourly rate. ALREADY INCLUDED in
+   * `amount` — it is a breakdown, not an addition. Zero on a daily wage, where a flat
+   * day rate is paid however long the day ran.
+   */
   overtimePay: number;
   amount: number;
   /** True when the employee has no salary mode/amount set yet. */
@@ -73,55 +85,27 @@ export function countWorkingDays(
   return count;
 }
 
-/** Minutes between two 'HH:mm' times, handling a shift that crosses midnight. */
-function minutesBetween(from: string, to: string): number {
-  return Math.round(hoursBetween(from, to) * 60);
-}
-
-/**
- * Drops repeat presses on the same finger.
- *
- * People press the sensor two or three times when they are not sure it registered, and the
- * terminal itself re-reports a batch after a failed handshake. One real day in this shop's
- * data has sixteen punches between 17:47 and 19:27 — nobody left and came back eight times.
- * Anything arriving within `minPunchGapMinutes` of the punch we already kept is the same
- * event, so it is discarded before any in/out meaning is read into the sequence.
+/*
+ * Repeat-press handling used to live here, as `dedupePunches`. It now belongs to
+ * `groupRuns` in ./punchSessions, which needs to know not just which presses to drop but
+ * WHETHER any were dropped — that fact is what tells an odd punch count caused by a
+ * collapsed repeat apart from a genuinely forgotten check-out. Keeping a second copy of
+ * the rule here would let the two drift, and they decide the same money.
  */
-export function dedupePunches(punches: string[], minGapMinutes: number): string[] {
-  const sorted = (punches || []).filter(Boolean).slice().sort();
-  if (sorted.length === 0) return [];
-
-  const gap = Math.max(0, minGapMinutes);
-  const kept = [sorted[0]];
-
-  for (const punch of sorted.slice(1)) {
-    if (minutesBetween(kept[kept.length - 1], punch) >= gap) kept.push(punch);
-  }
-
-  return kept;
-}
 
 /**
  * Paid hours for one day.
  *
  * The rule, in order:
  *
- * 1. A record an admin has corrected by hand wins outright. The stored `punches` array
+ * 1. An explicit hours override beats everything.
+ * 2. A record an admin has corrected by hand wins next. The stored `punches` array
  *    survives a manual edit (the write merges), so reading punches first would quietly
  *    ignore the correction and keep paying the number the admin just fixed — the edit
  *    would show in the table and do nothing to the payslip.
- * 2. Repeat presses are collapsed (see `dedupePunches`).
- * 3. With an EVEN number of punches left, they pair up cleanly — 1st→2nd worked, 2nd→3rd
- *    away, 3rd→4th worked — and only the away stretches lasting at least `minBreakMinutes`
- *    come off the day. Stepping out for three minutes is not a lunch break.
- * 4. With an ODD number, a punch is missing and the pairing cannot be trusted, so the day
- *    falls back to "time on the premises, less the standard break" — the same rule as a day
- *    with no lunch punch at all.
- *
- * ⚠️ Point 4 is not a tidy-up, it is the fix for a real miscalculation. Collapsing a repeat
- * press can turn an even sequence odd, and then every gap's meaning flips: a day punched
- * 09:00, 12:00, 12:03, 18:00 (a three-minute step outside) collapses to three punches, and
- * reading the parity would call 12:00→18:00 "time away" and pay 3 hours for a 9-hour day.
+ * 3. Otherwise the day is read as PERIODS: check-in to check-out, added together. That
+ *    whole reading lives in `buildDayTimeline`, which is also what the Records and Punches
+ *    tabs display, so the number on screen and the number on the payslip cannot drift.
  *
  * All of this happens at calculation time rather than being baked into the stored record,
  * so changing a rule recalculates history instead of corrupting it.
@@ -155,41 +139,33 @@ export function paidHoursForDay(
     return lessFixedBreak(record.hoursWorked || hoursBetween(record.checkIn, record.checkOut));
   }
 
-  const minPunchGap =
-    settings.minPunchGapMinutes ?? DEFAULT_ATTENDANCE_SETTINGS.minPunchGapMinutes;
-  const minBreak = settings.minBreakMinutes ?? DEFAULT_ATTENDANCE_SETTINGS.minBreakMinutes;
-  const punches = dedupePunches(record.punches || [], minPunchGap);
-
-  if (punches.length >= 2) {
-    const spanHours = minutesBetween(punches[0], punches[punches.length - 1]) / 60;
-
-    /*
-     * Odd means a punch is missing, so the in/out pairing below would be reading the gaps
-     * backwards. Fall back rather than guess.
-     *
-     * The span is taken from the DE-DUPLICATED punches, not from `record.hoursWorked` —
-     * that stored figure is first-to-last of the raw presses, so a stray press two minutes
-     * after clocking off would otherwise still stretch the day.
-     */
-    if (punches.length % 2 === 1) return lessFixedBreak(spanHours);
-
-    // (3) Two punches is one unbroken stretch with no lunch punched, so the standard break
-    // comes off. Four or more, and the real absences are visible and used exactly.
-    if (punches.length === 2) return lessFixedBreak(spanHours);
-
-    let awayMinutes = 0;
-    // Odd-indexed gaps are out→in. Even-indexed ones are time actually worked.
-    for (let i = 1; i + 1 < punches.length; i += 2) {
-      const gap = minutesBetween(punches[i], punches[i + 1]);
-      if (gap >= minBreak) awayMinutes += gap;
-    }
-
-    return round2(Math.max(0, spanHours * 60 - awayMinutes) / 60);
+  // (2) The periods, exactly as the Records tab draws them.
+  if ((record.punches || []).length >= 2) {
+    return round2(buildDayTimeline(record.punches || [], settings).paidMinutes / 60);
   }
 
-  // A single punch: clocked in and never out. Nothing is guessed.
+  /*
+   * No usable punch array — a day an admin added by hand, or a single press with no
+   * check-out. Fall back to the stored times; a day that never closed pays nothing.
+   */
   if (!record.checkIn || !record.checkOut) return 0;
   return lessFixedBreak(record.hoursWorked || hoursBetween(record.checkIn, record.checkOut));
+}
+
+/**
+ * Overtime for one day: everything beyond that person's own standard day.
+ *
+ * Per DAY, not per month, because that is the question the shop actually asks — "they
+ * stayed three hours late on Tuesday, do I pay for it?" A month-long total silently nets
+ * a late Tuesday against an early Friday and nobody ever sees the overtime happen.
+ */
+export function overtimeHoursForDay(
+  record: Parameters<typeof paidHoursForDay>[0],
+  standardHoursPerDay: number,
+  settings: AttendanceSettings = DEFAULT_ATTENDANCE_SETTINGS
+): number {
+  const standard = standardHoursPerDay || DEFAULT_ATTENDANCE_SETTINGS.standardHoursPerDay;
+  return round2(Math.max(0, paidHoursForDay(record, settings) - standard));
 }
 
 /** Minutes between two 'HH:mm' times, as decimal hours. Returns 0 if either is missing. */
@@ -239,6 +215,26 @@ export function calculateSalary(
   const standardHours = settings.standardHoursPerDay || DEFAULT_ATTENDANCE_SETTINGS.standardHoursPerDay;
   const expectedHours = round2(workingDays * standardHours);
 
+  /*
+   * Overtime is counted a day at a time, against THIS employee's standard day.
+   *
+   * A month-long comparison hides it: nine hours on Monday and seven on Tuesday nets to
+   * nothing, and the owner never learns that Monday ran long. Counting per day surfaces
+   * every late evening for approval. It does not change what anybody is paid — overtime
+   * goes at the same hourly rate, and those hours are already inside `paidHours` — it
+   * changes only what the shop is told about them.
+   */
+  const employeeStandardHours = employee.standardHoursPerDay || standardHours;
+  const overtimeHours = round2(
+    inPeriod.reduce(
+      (sum, record) => sum + overtimeHoursForDay(record, employeeStandardHours, settings),
+      0
+    )
+  );
+  const overtimeDays = inPeriod.filter(
+    (record) => overtimeHoursForDay(record, employeeStandardHours, settings) > 0
+  ).length;
+
   const base = {
     daysWorked,
     hoursWorked,
@@ -246,7 +242,8 @@ export function calculateSalary(
     workingDays,
     expectedHours,
     hourlyRate: 0,
-    overtimeHours: 0,
+    overtimeHours,
+    overtimeDays,
     overtimePay: 0,
   };
 
@@ -269,6 +266,8 @@ export function calculateSalary(
       return {
         ...base,
         hourlyRate: rate,
+        // Overtime is already inside `paidHours`; this only breaks out what it was worth.
+        overtimePay: round2(rate * overtimeHours),
         amount: round2(rate * paidHours),
         needsSetup: false,
         formula: `₹${rate}/hr × ${paidHours} hr worked`,
@@ -297,14 +296,12 @@ export function calculateSalary(
        */
       const exactRate = rate / expectedHours;
       const hourlyRate = round2(exactRate);
-      const overtimeHours = round2(Math.max(0, paidHours - expectedHours));
       const overtimePay = round2(exactRate * overtimeHours);
       const amount = round2(exactRate * paidHours);
 
       return {
         ...base,
         hourlyRate,
-        overtimeHours,
         overtimePay,
         amount,
         needsSetup: false,

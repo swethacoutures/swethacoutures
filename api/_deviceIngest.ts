@@ -958,14 +958,25 @@ export async function foldIntoDayRecords(
       continue;
     }
 
+    /*
+     * Nothing about this day changed.
+     *
+     * The punch array is part of that comparison, not an afterthought: pay is worked out
+     * from the PERIODS inside the day, so a punch landing between the existing first and
+     * last still changes the money even though neither end moves. A delayed batch carrying
+     * a lunch punch — in 09:00 and out 18:00 already stored, 13:00 and 14:00 arriving
+     * afterwards — leaves check-in, check-out and the span identical, and without this
+     * check the lunch break would be dropped on the floor and paid for.
+     */
     if (
       prior &&
       (prior.checkIn || '') === (checkIn || '') &&
       (prior.checkOut || '') === checkOut &&
       (prior.hoursWorked || 0) === hoursWorked &&
-      prior.employeeName === employeeName
+      prior.employeeName === employeeName &&
+      JSON.stringify(priorPunches) === JSON.stringify(merged)
     ) {
-      continue; // Nothing about this day changed.
+      continue;
     }
 
     updates.push({

@@ -21,17 +21,22 @@ import { pathToFileURL } from 'node:url';
  */
 function loadSalaryModule() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'salary-test-'));
-  for (const name of ['salaryCalc.ts', 'types.ts']) {
+  for (const name of ['salaryCalc.ts', 'punchSessions.ts', 'types.ts']) {
     const source = fs.readFileSync(path.join('src', 'utils', 'attendance', name), 'utf8');
     fs.writeFileSync(
       path.join(dir, name),
       source.replace(/from '\.\/([A-Za-z0-9_]+)'/g, "from './$1.ts'")
     );
   }
-  return import(pathToFileURL(path.join(dir, 'salaryCalc.ts')).href);
+  return Promise.all([
+    import(pathToFileURL(path.join(dir, 'salaryCalc.ts')).href),
+    import(pathToFileURL(path.join(dir, 'punchSessions.ts')).href),
+  ]);
 }
 
-const { calculateSalary, countWorkingDays, paidHoursForDay } = await loadSalaryModule();
+const [salaryModule, sessionsModule] = await loadSalaryModule();
+const { calculateSalary, countWorkingDays, paidHoursForDay, overtimeHoursForDay } = salaryModule;
+const { buildDayTimeline } = sessionsModule;
 
 type AttendanceEmployee = Record<string, unknown>;
 type AttendanceRecord = Record<string, unknown>;
@@ -424,6 +429,98 @@ section("A hand correction beats the device's punches");
   const salary = calculateSalary(monthly(10000), [corrected], '2026-08-01', '2026-08-31', SETTINGS);
   check('and the correction reaches the payslip',
     salary.paidHours === 9, String(salary.paidHours));
+}
+
+/* --------------------------------------------------- periods & punch roles */
+
+section('A day is made of periods — check-in to check-out, added together');
+{
+  const t = buildDayTimeline(['09:00', '13:00', '14:00', '18:00'], SETTINGS);
+
+  check('two periods are found', t.periods.length === 2, String(t.periods.length));
+  check('period 1 is 09:00 to 13:00',
+    t.periods[0].checkIn === '09:00' && t.periods[0].checkOut === '13:00');
+  check('period 2 is 14:00 to 18:00',
+    t.periods[1].checkIn === '14:00' && t.periods[1].checkOut === '18:00');
+  check('the day is the two periods added together',
+    t.workedMinutes === 480, String(t.workedMinutes));
+  check('lunch is not inside the total', t.workedMinutes !== 540);
+  check('the day is complete', !t.incomplete && !t.assumed);
+
+  // Three periods: in, out for lunch, back, out for an errand, back, home.
+  const three = buildDayTimeline(
+    ['09:00', '13:00', '14:00', '16:00', '16:30', '18:00'], SETTINGS);
+  check('three periods are found', three.periods.length === 3, String(three.periods.length));
+  check('and all three are added up',
+    three.workedMinutes === 240 + 120 + 90, String(three.workedMinutes));
+}
+
+section('The platform decides check-in / check-out, not the machine');
+{
+  const t = buildDayTimeline(['09:00', '13:00', '14:00', '18:00'], SETTINGS);
+  const roleAt = (time: string) => t.roles.find((r) => r.time === time)?.role;
+
+  check('1st press of the day is a check-in', roleAt('09:00') === 'in');
+  check('2nd press is a check-out', roleAt('13:00') === 'out');
+  check('3rd press is a check-in again', roleAt('14:00') === 'in');
+  check('4th press is a check-out again', roleAt('18:00') === 'out');
+}
+
+section('Repeat presses are labelled as repeats, not as periods');
+{
+  // The owner's own test: 15 presses inside 23 minutes, one afternoon.
+  const real = ['14:52', '14:53', '14:54', '14:55', '14:56', '14:58', '15:15'];
+  const t = buildDayTimeline(real, SETTINGS);
+
+  check('a jabbed sensor is one arrival, not seven periods',
+    t.periods.length === 1, String(t.periods.length));
+  check('the period runs from the first press to the last',
+    t.periods[0].checkIn === '14:52' && t.periods[0].checkOut === '15:15');
+  check('the presses in between are marked as repeats',
+    t.roles.filter((r) => r.role === 'repeat').length === 5,
+    String(t.roles.filter((r) => r.role === 'repeat').length));
+  check('and the day is 23 minutes, not 4', t.workedMinutes === 23, String(t.workedMinutes));
+}
+
+section('A forgotten check-out is flagged, never invented');
+{
+  const t = buildDayTimeline(['09:00', '13:00', '14:00'], SETTINGS);
+
+  check('the complete period is still paid', t.periods.length === 1 && t.periods[0].minutes === 240);
+  check('the unmatched press is left open as a check-in', t.openCheckIn === '14:00');
+  check('and the day is flagged for the admin', t.incomplete === true);
+
+  const nothing = buildDayTimeline(['09:00'], SETTINGS);
+  check('a lone press pays nothing and is flagged',
+    nothing.paidMinutes === 0 && nothing.incomplete === true);
+}
+
+section('Overtime is counted per day, against that person’s standard day');
+{
+  check('a 10-hour day against an 8-hour standard is 2 hours over',
+    overtimeHoursForDay(day('2026-08-03', '09:00', '20:00'), 8, SETTINGS) === 2,
+    String(overtimeHoursForDay(day('2026-08-03', '09:00', '20:00'), 8, SETTINGS)));
+
+  check('a normal day is no overtime at all',
+    overtimeHoursForDay(day('2026-08-03', '09:00', '18:00'), 8, SETTINGS) === 0);
+
+  /*
+   * The reason for counting per day. A long Monday and a short Tuesday net to nothing over
+   * a month, and the owner never learns Monday ran late. Per day, the hour is visible.
+   */
+  const records = [
+    day('2026-08-03', '09:00', '19:00'), // 10h span - 1h break = 9 paid
+    day('2026-08-04', '09:00', '17:00'), //  8h span - 1h break = 7 paid
+  ];
+  const r = calculateSalary(monthly(10000), records, '2026-08-01', '2026-08-31', SETTINGS);
+
+  check('a long day is not cancelled out by a short one',
+    r.overtimeHours === 1, String(r.overtimeHours));
+  check('and the shop is told which days ran long',
+    r.overtimeDays === 1, String(r.overtimeDays));
+  // 16 paid hours at ₹10,000/208 = ₹769.23. The overtime hour is one of those 16.
+  check('overtime is already inside the pay, not added twice',
+    r.amount === 769.23, String(r.amount));
 }
 
 console.log(`\n${'─'.repeat(60)}`);

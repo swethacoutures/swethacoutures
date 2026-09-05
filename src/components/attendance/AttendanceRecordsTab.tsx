@@ -18,7 +18,7 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
-import { Pencil, Plus, Trash2, Search, LogIn, LogOut, Clock } from 'lucide-react';
+import { Pencil, Plus, Trash2, Search, LogIn, LogOut, Clock, Wallet } from 'lucide-react';
 import { toast } from '@/hooks/use-toast';
 import { deleteRecord, deleteRecords } from '@/utils/attendance/attendanceStore';
 import type {
@@ -28,6 +28,8 @@ import type {
 } from '@/utils/attendance/types';
 import RecordEditDialog from './RecordEditDialog';
 import BulkDeleteDialog, { type DeleteScope } from './BulkDeleteDialog';
+import { buildDayTimeline, type WorkPeriod } from '@/utils/attendance/punchSessions';
+import { paidHoursForDay } from '@/utils/attendance/salaryCalc';
 
 interface AttendanceRecordsTabProps {
   records: AttendanceRecord[];
@@ -78,13 +80,54 @@ const AttendanceRecordsTab: React.FC<AttendanceRecordsTabProps> = ({
     });
   }, [records, search, employeeFilter]);
 
+  /**
+   * Each row with its day read as periods.
+   *
+   * An admin's correction — a fixed time or an outright hours override — replaces the
+   * punches entirely, so those rows show the times the admin set rather than the periods
+   * the machine originally recorded. Anything else is the punches, read exactly the way
+   * payroll reads them.
+   */
+  const rows = useMemo(
+    () =>
+      filtered.map((record) => {
+        const paidHours = paidHoursForDay(record, settings);
+        const corrected = typeof record.overrideHours === 'number' || !!record.manuallyEdited;
+
+        if (corrected || (record.punches || []).length < 2) {
+          const periods: WorkPeriod[] =
+            record.checkIn && record.checkOut
+              ? [{ checkIn: record.checkIn, checkOut: record.checkOut, minutes: 0 }]
+              : [];
+          return {
+            record,
+            paidHours,
+            periods,
+            openCheckIn: record.checkIn && !record.checkOut ? record.checkIn : undefined,
+            assumed: false,
+          };
+        }
+
+        const timeline = buildDayTimeline(record.punches || [], settings);
+        return {
+          record,
+          paidHours,
+          periods: timeline.periods,
+          openCheckIn: timeline.openCheckIn,
+          assumed: timeline.assumed,
+        };
+      }),
+    [filtered, settings]
+  );
+
   const totals = useMemo(
     () => ({
-      days: filtered.filter((record) => !!record.checkIn).length,
-      hours: Math.round(filtered.reduce((sum, r) => sum + (r.hoursWorked || 0), 0) * 100) / 100,
-      incomplete: filtered.filter((record) => record.status === 'incomplete').length,
+      days: rows.filter((row) => !!row.record.checkIn).length,
+      hours: Math.round(rows.reduce((sum, row) => sum + (row.record.hoursWorked || 0), 0) * 100) / 100,
+      paid: Math.round(rows.reduce((sum, row) => sum + row.paidHours, 0) * 100) / 100,
+      incomplete: rows.filter((row) => !!row.openCheckIn).length,
     }),
-    [filtered]
+    [rows]
   );
 
   const handleDelete = async (record: AttendanceRecord) => {
@@ -127,7 +170,7 @@ const AttendanceRecordsTab: React.FC<AttendanceRecordsTabProps> = ({
 
   return (
     <div className="space-y-4">
-      <div className="grid grid-cols-3 gap-3">
+      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
         <Card>
           <CardContent className="flex items-center gap-3 p-4">
             <LogIn className="h-5 w-5 shrink-0 text-green-600" />
@@ -139,10 +182,23 @@ const AttendanceRecordsTab: React.FC<AttendanceRecordsTabProps> = ({
         </Card>
         <Card>
           <CardContent className="flex items-center gap-3 p-4">
-            <Clock className="h-5 w-5 shrink-0 text-blue-600" />
+            <Clock className="h-5 w-5 shrink-0 text-gray-400" />
             <div className="min-w-0">
-              <p className="text-xs text-gray-500">Total hours</p>
+              <p className="text-xs text-gray-500">Time in the shop</p>
               <p className="text-lg font-bold text-gray-900 dark:text-gray-100">{totals.hours}</p>
+            </div>
+          </CardContent>
+        </Card>
+        {/* The figure that becomes money, given the same weight on screen as it has on the
+            payslip — reading "time in the shop" as pay is the mistake this tile prevents. */}
+        <Card className="border-emerald-200 bg-emerald-50/60 dark:border-emerald-900 dark:bg-emerald-950/30">
+          <CardContent className="flex items-center gap-3 p-4">
+            <Wallet className="h-5 w-5 shrink-0 text-emerald-600" />
+            <div className="min-w-0">
+              <p className="text-xs text-emerald-700 dark:text-emerald-400">Paid hours</p>
+              <p className="text-lg font-bold text-emerald-800 dark:text-emerald-200">
+                {totals.paid}
+              </p>
             </div>
           </CardContent>
         </Card>
@@ -210,9 +266,9 @@ const AttendanceRecordsTab: React.FC<AttendanceRecordsTabProps> = ({
                 <TableRow>
                   <TableHead>Employee</TableHead>
                   <TableHead>Date</TableHead>
-                  <TableHead>Check-in</TableHead>
-                  <TableHead>Check-out</TableHead>
-                  <TableHead className="text-right">Hours</TableHead>
+                  <TableHead>Periods (check-in → check-out)</TableHead>
+                  <TableHead className="hidden text-right sm:table-cell">In the shop</TableHead>
+                  <TableHead className="text-right">Paid hours</TableHead>
                   <TableHead>Status</TableHead>
                   <TableHead className="text-right">Actions</TableHead>
                 </TableRow>
@@ -231,7 +287,7 @@ const AttendanceRecordsTab: React.FC<AttendanceRecordsTabProps> = ({
                     </TableCell>
                   </TableRow>
                 ) : (
-                  filtered.map((record) => (
+                  rows.map(({ record, paidHours, periods, openCheckIn, assumed }) => (
                     <TableRow key={record.id}>
                       <TableCell>
                         <div className="font-medium text-gray-900 dark:text-gray-100">
@@ -240,14 +296,48 @@ const AttendanceRecordsTab: React.FC<AttendanceRecordsTabProps> = ({
                         <div className="text-xs text-gray-500">{record.empCode}</div>
                       </TableCell>
                       <TableCell className="whitespace-nowrap">{formatDate(record.date)}</TableCell>
-                      <TableCell className="font-mono">{record.checkIn || '—'}</TableCell>
-                      <TableCell className="font-mono">{record.checkOut || '—'}</TableCell>
-                      <TableCell className="text-right font-medium">
+                      {/* Every period on its own line. A one-period day reads exactly like
+                          the old check-in / check-out pair; a day with a lunch break now
+                          shows both halves instead of hiding them inside a single span. */}
+                      <TableCell className="font-mono text-sm">
+                        {periods.length === 0 && !openCheckIn ? (
+                          '—'
+                        ) : (
+                          <div className="flex flex-col gap-0.5">
+                            {periods.map((period, index) => (
+                              <div key={`${period.checkIn}-${index}`} className="whitespace-nowrap">
+                                <span className="text-gray-400">{index + 1}.</span>{' '}
+                                {period.checkIn} <span className="text-gray-400">→</span>{' '}
+                                {period.checkOut}
+                              </div>
+                            ))}
+                            {openCheckIn && (
+                              <div className="whitespace-nowrap text-amber-700 dark:text-amber-400">
+                                <span className="opacity-60">{periods.length + 1}.</span>{' '}
+                                {openCheckIn} <span className="opacity-60">→</span> ?
+                              </div>
+                            )}
+                          </div>
+                        )}
+                      </TableCell>
+                      <TableCell className="hidden text-right text-gray-500 sm:table-cell">
                         {record.hoursWorked ? record.hoursWorked.toFixed(2) : '—'}
+                      </TableCell>
+                      <TableCell className="text-right font-semibold text-emerald-700 dark:text-emerald-400">
+                        {paidHours ? paidHours.toFixed(2) : '—'}
                       </TableCell>
                       <TableCell>
                         <div className="flex flex-wrap gap-1">
-                          {record.status === 'incomplete' ? (
+                          {assumed && (
+                            <Badge
+                              variant="outline"
+                              className="border-gray-300 text-xs text-gray-500"
+                              title="Repeat presses left an odd number of punches, so this day is read as one stretch rather than split into periods."
+                            >
+                              Repeat presses
+                            </Badge>
+                          )}
+                          {openCheckIn || record.status === 'incomplete' ? (
                             <Badge variant="outline" className="border-amber-300 bg-amber-50 text-amber-700 dark:bg-amber-950/50 dark:text-amber-300">
                               No check-out
                             </Badge>

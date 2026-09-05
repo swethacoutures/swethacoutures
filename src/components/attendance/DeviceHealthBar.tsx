@@ -272,9 +272,11 @@ const DeviceHealthBar: React.FC<DeviceHealthBarProps> = ({ devices, loading, onC
 
   return (
     <div className={`space-y-3 rounded-xl border p-4 ${tone}`}>
-      <div className="flex items-start gap-3">
+      {/* Wraps rather than squeezes: on a phone the serial number is long enough that
+          holding the Sync clock button on the same line broke it across two lines. */}
+      <div className="flex flex-wrap items-start gap-3">
         <Icon className={`mt-0.5 h-5 w-5 shrink-0 ${iconTone}`} />
-        <div className="min-w-0">
+        <div className="min-w-0 flex-1">
           <p className="text-sm font-semibold text-gray-900 dark:text-gray-100">{headline}</p>
           {detail && (
             <p className="mt-0.5 break-words text-xs text-gray-600 dark:text-gray-400">{detail}</p>

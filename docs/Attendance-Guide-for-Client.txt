@@ -1,0 +1,283 @@
+====================================================================
+  SWETHA'S COUTURE — FINGERPRINT ATTENDANCE
+  A short guide for the owner
+====================================================================
+
+Employees press their finger on the machine. Everything else —
+hours, days, salary — is worked out by the app on its own.
+There is no daily task for you.
+
+This page covers the three things you actually need: adding a
+person, how their hours are counted, and how to fix a mistake.
+
+
+--------------------------------------------------------------------
+1. ADDING A NEW EMPLOYEE  —  the one rule
+--------------------------------------------------------------------
+
+The machine does not know anybody's name. All it ever sends us
+is a NUMBER. So the number in the app and the number on the
+machine MUST BE THE SAME.
+
+    IN THE APP                       ON THE MACHINE
+    Employees > S.No  =  5    <-->   User ID  =  5
+
+Give each new person the next free number: 1, 2, 3 ...
+NEVER reuse a number that once belonged to someone else — their
+old attendance would join the new person's record.
+
+
+STEP 1 — In the app:  Employees  >  Add Employee
+
+    Full Name .................. how they appear everywhere
+    Pay basis * ................ Monthly salary / Daily wage /
+                                 Rate per hour
+    Amount * ................... the box renames itself to match
+                                 (e.g. Monthly salary 18000)
+    Standard hours per day * ... a full day for this person,
+                                 usually 8
+    Fingerprint device number (S.No)
+                                 THE NUMBER ABOVE. Type it now,
+                                 even before they have ever
+                                 touched the machine.
+
+    Phone, email, role, department, bonus — all optional.
+
+    Save. You will see a green line confirming:
+    "Punches from device number 5 will count towards this employee."
+
+
+STEP 2 — On the machine (stand there with the employee)
+
+    Press  M/OK  >  User Mgt.  >  New User
+
+    User ID ...... the SAME number you typed as S.No.
+                   This is the field that matters. Get it wrong
+                   and their hours go to nobody.
+    Name ......... optional, the app can pull it in later
+    Fingerprint .. place the finger 3 times as prompted.
+                   Use an index finger, pressed flat.
+    ESC .......... to save
+
+    If the machine says the User ID is already taken, that number
+    belongs to somebody else. Back out, pick a free number, and
+    correct the S.No in the app to match.
+
+
+STEP 3 — Check it worked (one punch proves everything)
+
+    Ask them to press their finger once, then open Attendance:
+
+    Punches ..... the press appears within about 30 seconds
+    Employees ... they are listed with their real name and pay.
+                  If an ORANGE BANNER says "device number not
+                  connected", the two numbers do not match —
+                  go back and fix the S.No.
+    Records ..... today's row exists, showing a check-in
+
+    Still showing as a bare number instead of a name?
+    Attendance > Employees > "Get names from device".
+
+
+--------------------------------------------------------------------
+2. HOW A DAY IS COUNTED
+--------------------------------------------------------------------
+
+A day is made of PERIODS. A period is one check-in and the
+check-out that follows it. The day's work is all the periods
+added together. The Records tab shows every period on the row.
+
+    09:00 in                     PERIOD 1  =  4 h 00
+    13:00 out  --+
+                 |  lunch, 1 h — not paid
+    14:00 in   --+
+    18:00 out                    PERIOD 2  =  4 h 00
+                                 -------------------
+                                 DAY TOTAL =  8 h 00
+
+THE APP DECIDES CHECK-IN / CHECK-OUT, NOT THE MACHINE.
+The 1st press of the day is a check-in, the 2nd a check-out,
+the 3rd a check-in again, and so on. The machine's own label is
+ignored completely — it comes from whichever mode key the
+terminal was left in and is often wrong.
+
+A fuller day, to show how it adds up:
+
+    09:00 in    arrived
+    09:30 out   went out for a call     ) 30 min, NOT paid
+    10:00 in    came back               )
+    13:00 out   lunch                   ) 1 hour, NOT paid
+    14:00 in    back from lunch         )
+    17:00 out   short break             ) 5 min, STILL PAID
+    17:05 in    back after 5 minutes    )
+    18:00 out   went home
+
+    1. 09:00 -> 09:30     30m
+    2. 10:00 -> 13:00     3h
+    3. 14:00 -> 18:00     4h   (the 5-min break merged in)
+                          ---------------
+    In the shop  9 h 00
+    PAID         7 h 30
+
+
+TWO RULES THAT KEEP THE MATHS HONEST
+(both changeable in Attendance > Payroll > Working rules)
+
+  * Presses within 5 MINUTES of each other count as ONE press.
+    People jab the sensor three or four times when they are not
+    sure it read. Without this rule, one arrival would become
+    four tiny periods and the day would collapse to a few
+    minutes.
+
+  * An absence is only a break if it is 20 MINUTES OR MORE.
+    Stepping outside for three minutes stays paid. Going for
+    lunch does not.
+
+  IF YOU ARE TESTING THIS YOURSELF: punching five times inside
+  two minutes will NOT show separate periods — it is read as one
+  arrival, which is correct. To see real periods, leave more
+  than 5 minutes between presses and more than 20 minutes for
+  the break in the middle.
+
+
+THE TWO NUMBERS ON SCREEN — they are not the same thing
+
+The Records tab shows both, side by side, on every row:
+
+  "In the shop" ............ first punch of the day to the last.
+                             Lunch is still inside it. Grey.
+
+  "Paid hours" ............. the periods added up, with real
+                             breaks removed. Green. THIS IS THE
+                             FIGURE THAT BECOMES SALARY.
+
+  Click the pencil on any row and you also see the periods the
+  machine recorded, so you can see what a correction does to the
+  pay before you save it.
+
+
+--------------------------------------------------------------------
+3. HOW THE HOURS BECOME MONEY
+--------------------------------------------------------------------
+
+  Monthly salary ... converted to an hourly rate and paid on the
+                     hours actually worked:
+                     rate = salary / (working days x standard hours)
+                     Arriving late and staying on still earns a
+                     full day. Leaving early docks only the hours
+                     missed.
+
+  Daily wage ....... a flat amount for every day they check in.
+
+  Rate per hour .... rate x the hours actually worked.
+
+  OVERTIME is counted A DAY AT A TIME, against that person's
+  standard day. Work 9 hours on a 8-hour day and that is 1 hour
+  of overtime — it is NOT cancelled out by a short day later in
+  the month.
+
+  When anyone has overtime, an orange message appears at the top
+  of Payroll naming them, the hours, and what those hours are
+  worth. The hours are ALREADY INCLUDED in the salary below, at
+  their normal hourly rate — the message is there so paying it
+  is your decision and not a surprise.
+
+  To pay overtime differently, or not at all, open that day on
+  Records and use "Set the paid hours myself".
+
+  On a DAILY WAGE the day rate is flat, so overtime is shown but
+  nothing extra is added. The message says so.
+
+  Attendance > Payroll > pick the month > Mark paid.
+  Export the whole month to Excel with "Export Excel".
+  Paid the wrong person? Press Undo — it reverses and says so.
+
+
+--------------------------------------------------------------------
+4. WHEN SOMEONE FORGETS TO PUNCH  —  you have full control
+--------------------------------------------------------------------
+
+The app NEVER guesses a missing punch. When a check-out is
+missing, the row shows the unfinished period as
+
+    3. 17:05 -> ?
+
+in orange, marks the day "No check-out", and pays only the
+periods that DID close. The unfinished stretch pays nothing
+until you fix it. That is deliberate — better than quietly
+paying a wrong number.
+
+Everything below is on  Attendance > Records:
+
+  Forgot to check OUT ......... pencil on the row, type the
+                               check-out time
+  Forgot to check IN .......... pencil on the row, type the
+                               check-in time
+  Missing the whole day ....... "Add" — pick the person, the
+                               date and the times
+  A day that should not exist .. bin icon on the row
+  The hours are simply wrong ... pencil > "Set the paid hours
+                               myself" > type the hours. This
+                               beats every rule, for a day you
+                               agreed to pay differently. The
+                               row then shows a "Paid 8 hrs"
+                               badge so nobody wonders later.
+  A stray duplicate press ..... Attendance > Punches > bin icon
+
+A day you have corrected by hand is LOCKED. The machine can
+never overwrite it again.
+
+Every edit, deletion and payment is recorded under
+Attendance > Activity — who did it, when, and what changed.
+Nothing is ever silently rewritten.
+
+
+--------------------------------------------------------------------
+5. IF SOMETHING LOOKS WRONG
+--------------------------------------------------------------------
+
+  Orange banner: "device number not connected"
+      The number on the machine matches no S.No in the app.
+      Employees > open the person > fix the S.No.
+
+  Employee shows as a bare number
+      Nobody has named them. Attendance > Employees >
+      "Get names from device", or type the name.
+
+  "Needs setup" in Payroll
+      No pay basis or amount set — they count as 0.
+      Employees > open them > choose a basis and amount.
+
+  No punches arriving at all
+      The terminal cannot reach the internet. On the machine:
+      M/OK > COMM. > Ethernet. Gateway and DNS must NOT be
+      0.0.0.0. (This is the most common cause by far.)
+
+  Device time looks wrong
+      Press "Sync clock" on the bar at the top of Attendance.
+      It also corrects itself automatically every 6 hours.
+
+  Everyone shows Absent today
+      It is a weekly off day (Sunday by default), or the device
+      is offline — check the bar at the top of Attendance.
+
+  A finger is not recognised
+      Re-enrol on the machine under the SAME User ID, and add a
+      second finger as a backup.
+
+
+--------------------------------------------------------------------
+6. WHERE THINGS LIVE
+--------------------------------------------------------------------
+
+  People and pay ................ Employees
+  Approve device, Sync clock .... Attendance, top bar
+  Every raw press ............... Attendance > Punches
+  Day records and corrections ... Attendance > Records
+  Salary, Mark paid, Excel ...... Attendance > Payroll
+  Shop rules .................... Attendance > Payroll >
+                                  Working rules
+  Who changed what .............. Attendance > Activity
+  Today at a glance ............. Admin Dashboard
+
+====================================================================

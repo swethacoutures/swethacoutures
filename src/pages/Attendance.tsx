@@ -205,7 +205,12 @@ const Attendance: React.FC = () => {
       />
 
       <Tabs defaultValue="records" className="space-y-4">
-        <TabsList className="grid w-full grid-cols-2 sm:w-auto sm:inline-flex md:grid-cols-5">
+        {/*
+          h-auto matters: the base TabsList is a fixed h-10, which is right for one row of
+          tabs and wrong for the wrapped grid a phone gets. Without it the five triggers are
+          laid out in three rows inside a 40px box and print on top of each other.
+        */}
+        <TabsList className="grid h-auto w-full grid-cols-3 gap-1 sm:grid-cols-5 md:inline-flex md:h-10 md:w-auto md:gap-0">
           <TabsTrigger value="records">Records</TabsTrigger>
           <TabsTrigger value="punches">Punches</TabsTrigger>
           <TabsTrigger value="employees">Employees</TabsTrigger>
@@ -231,6 +236,7 @@ const Attendance: React.FC = () => {
             loading={loading}
             onChanged={loadAll}
             periodLabel={periodLabel}
+            settings={settings}
           />
         </TabsContent>
 

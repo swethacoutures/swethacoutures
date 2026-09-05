@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   Dialog,
   DialogContent,
@@ -20,6 +20,7 @@ import {
 import { toast } from '@/hooks/use-toast';
 import { saveRecordManually } from '@/utils/attendance/attendanceStore';
 import { hoursBetween, paidHoursForDay } from '@/utils/attendance/salaryCalc';
+import { buildDayTimeline, formatDuration } from '@/utils/attendance/punchSessions';
 import { todayKey } from '@/utils/attendance/punchFolding';
 import { Switch } from '@/components/ui/switch';
 import type {
@@ -92,6 +93,18 @@ const RecordEditDialog: React.FC<RecordEditDialogProps> = ({
       overrideHours: overriding ? Number(overrideHours) || 0 : undefined,
     },
     settings
+  );
+
+  /**
+   * The periods the machine actually recorded, shown while the admin edits.
+   *
+   * Correcting a forgotten punch means deciding what the missing time was, and that is far
+   * easier with the day's real shape in front of you than with two empty time boxes. It is
+   * evidence, not an input — saving replaces it with the times typed above.
+   */
+  const machineDay = useMemo(
+    () => ((record?.punches || []).length >= 2 ? buildDayTimeline(record!.punches!, settings) : null),
+    [record, settings]
   );
 
   const handleSave = async () => {
@@ -199,6 +212,39 @@ const RecordEditDialog: React.FC<RecordEditDialogProps> = ({
               />
             </div>
           </div>
+
+          {machineDay && (
+            <div className="space-y-1.5 rounded-lg border border-dashed p-3 text-sm">
+              <p className="text-xs font-medium uppercase tracking-wide text-gray-500">
+                What the machine recorded
+              </p>
+              {machineDay.periods.map((period, index) => (
+                <div
+                  key={`${period.checkIn}-${index}`}
+                  className="flex items-center justify-between font-mono text-xs"
+                >
+                  <span>
+                    <span className="text-gray-400">{index + 1}.</span> {period.checkIn}{' '}
+                    <span className="text-gray-400">→</span> {period.checkOut}
+                  </span>
+                  <span className="text-gray-500">{formatDuration(period.minutes)}</span>
+                </div>
+              ))}
+              {machineDay.openCheckIn && (
+                <div className="font-mono text-xs text-amber-700 dark:text-amber-400">
+                  <span className="opacity-60">{machineDay.periods.length + 1}.</span>{' '}
+                  {machineDay.openCheckIn} <span className="opacity-60">→</span> ? — never
+                  checked out
+                </div>
+              )}
+              {machineDay.assumed && (
+                <p className="text-xs text-gray-500">
+                  Repeat presses left an odd number of punches, so this day is read as one
+                  stretch rather than split into periods.
+                </p>
+              )}
+            </div>
+          )}
 
           <div className="space-y-3 rounded-lg bg-gray-50 p-3 text-sm dark:bg-gray-900/60">
             <div className="flex items-center justify-between">

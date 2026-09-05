@@ -24,6 +24,8 @@ import { toast } from '@/hooks/use-toast';
 import { deletePunch, deletePunches } from '@/utils/attendance/deviceStore';
 import type { AttendanceEmployee, DevicePunch } from '@/utils/attendance/types';
 import BulkDeleteDialog, { type DeleteScope } from './BulkDeleteDialog';
+import { punchRoles, type PunchRole } from '@/utils/attendance/punchSessions';
+import { DEFAULT_ATTENDANCE_SETTINGS, type AttendanceSettings } from '@/utils/attendance/types';
 
 interface PunchesTabProps {
   punches: DevicePunch[];
@@ -33,7 +35,26 @@ interface PunchesTabProps {
   onChanged: () => void;
   /** The range these punches were loaded for, named for the delete confirmation. */
   periodLabel: string;
+  /** The shop's rules — they decide which presses are repeats. */
+  settings?: AttendanceSettings;
 }
+
+/** How each role is drawn. `repeat` is deliberately quiet: it is not a period boundary. */
+const ROLE_BADGE: Record<PunchRole, { label: string; className: string }> = {
+  in: {
+    label: 'Check in',
+    className:
+      'border-green-300 bg-green-50 text-green-700 dark:bg-green-950/50 dark:text-green-300',
+  },
+  out: {
+    label: 'Check out',
+    className: 'border-blue-300 bg-blue-50 text-blue-700 dark:bg-blue-950/50 dark:text-blue-300',
+  },
+  repeat: {
+    label: 'Repeat press',
+    className: 'border-gray-300 bg-gray-50 text-gray-500 dark:bg-gray-900 dark:text-gray-400',
+  },
+};
 
 /** '2026-08-08' -> '08 Aug 2026' */
 function formatDate(dateKey: string): string {
@@ -76,6 +97,7 @@ const PunchesTab: React.FC<PunchesTabProps> = ({
   loading,
   onChanged,
   periodLabel,
+  settings = DEFAULT_ATTENDANCE_SETTINGS,
 }) => {
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [bulkOpen, setBulkOpen] = useState(false);
@@ -126,13 +148,55 @@ const PunchesTab: React.FC<PunchesTabProps> = ({
     });
   }, [punches, search, employeeFilter]);
 
+  /**
+   * Check-in or check-out, decided HERE rather than by the terminal.
+   *
+   * The device sets its own IN/OUT flag from whichever mode key it happened to be in, and
+   * it is routinely wrong — the shop's own afternoon of fifteen presses came through as
+   * "Check in", "Check in", "Overtime in", with not one "out" among them. What a press
+   * means is its position in that person's day: first in, second out, third in again.
+   *
+   * Presses inside an already-counted minute are marked as repeats rather than given a
+   * role, so the table shows plainly why fifteen presses made one period.
+   */
+  const rolesByPunch = useMemo(() => {
+    const byDay = new Map<string, DevicePunch[]>();
+    for (const punch of punches) {
+      const key = `${punch.userPin}_${punch.punchDate}`;
+      const list = byDay.get(key) || [];
+      list.push(punch);
+      byDay.set(key, list);
+    }
+
+    const assigned = new Map<string, PunchRole>();
+
+    for (const dayPunches of byDay.values()) {
+      const ordered = [...dayPunches].sort((a, b) => timeOf(a).localeCompare(timeOf(b)));
+      const minutes = ordered.map((punch) => timeOf(punch).slice(0, 5));
+      const roles = punchRoles(minutes, settings);
+      const claimed = new Set<string>();
+
+      ordered.forEach((punch, index) => {
+        const minute = minutes[index];
+        // Only the first press of a minute carries its role; the rest are the same event.
+        const role = claimed.has(minute) ? 'repeat' : roles.get(minute) || 'repeat';
+        claimed.add(minute);
+        assigned.set(punch.id, role);
+      });
+    }
+
+    return assigned;
+  }, [punches, settings]);
+
+  const roleOf = (punch: DevicePunch): PunchRole => rolesByPunch.get(punch.id) || 'repeat';
+
   const totals = useMemo(
     () => ({
       total: filtered.length,
-      checkIns: filtered.filter((punch) => punch.punchState === '0').length,
-      checkOuts: filtered.filter((punch) => punch.punchState === '1').length,
+      checkIns: filtered.filter((punch) => rolesByPunch.get(punch.id) === 'in').length,
+      checkOuts: filtered.filter((punch) => rolesByPunch.get(punch.id) === 'out').length,
     }),
-    [filtered]
+    [filtered, rolesByPunch]
   );
 
   const handleDeleteAll = async (scope: DeleteScope) => {
@@ -168,6 +232,7 @@ const PunchesTab: React.FC<PunchesTabProps> = ({
       'Date',
       'Time',
       'Type',
+      'Device said',
       'Device time (raw)',
       'UTC',
       'Verify mode',
@@ -180,7 +245,9 @@ const PunchesTab: React.FC<PunchesTabProps> = ({
       punch.userPin,
       punch.punchDate,
       timeOf(punch),
-      punch.punchStateLabel || 'Punch',
+      ROLE_BADGE[roleOf(punch)].label,
+      // Kept alongside ours purely as evidence — this is the flag we do not trust.
+      punch.punchStateLabel || '',
       punch.punchTimeRaw,
       punch.punchTimeUtc || '',
       punch.verifyMode || '',
@@ -316,21 +383,9 @@ const PunchesTab: React.FC<PunchesTabProps> = ({
                       <TableCell className="whitespace-nowrap font-mono">{timeOf(punch)}</TableCell>
                       <TableCell>
                         <div className="flex flex-wrap gap-1">
-                          {punch.punchState === '1' ? (
-                            <Badge
-                              variant="outline"
-                              className="border-blue-300 bg-blue-50 text-blue-700 dark:bg-blue-950/50 dark:text-blue-300"
-                            >
-                              {punch.punchStateLabel || 'Check out'}
-                            </Badge>
-                          ) : (
-                            <Badge
-                              variant="outline"
-                              className="border-green-300 bg-green-50 text-green-700 dark:bg-green-950/50 dark:text-green-300"
-                            >
-                              {punch.punchStateLabel || 'Check in'}
-                            </Badge>
-                          )}
+                          <Badge variant="outline" className={ROLE_BADGE[roleOf(punch)].className}>
+                            {ROLE_BADGE[roleOf(punch)].label}
+                          </Badge>
                           {punch.parked && (
                             <Badge
                               variant="outline"

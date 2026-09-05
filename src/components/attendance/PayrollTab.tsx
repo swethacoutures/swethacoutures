@@ -93,6 +93,32 @@ const PayrollTab: React.FC<PayrollTabProps> = ({
     [employees, allRecords, start, end, paymentByCode, settings]
   );
 
+  /**
+   * Everyone who worked past their standard day this month.
+   *
+   * The shop's request, in the owner's words: "if it goes beyond their work hours show the
+   * message to the admin that this many hours they did overtime, can you pay for that."
+   * The hours are already inside the salary at the normal rate — this is the message that
+   * makes them visible, so paying is a decision rather than an accident.
+   */
+  const overtime = useMemo(() => {
+    const people = rows
+      .filter((row) => row.breakdown.overtimeHours > 0)
+      .map((row) => ({
+        name: row.employee.name,
+        hours: row.breakdown.overtimeHours,
+        days: row.breakdown.overtimeDays,
+        pay: row.breakdown.overtimePay,
+        mode: row.employee.salaryMode,
+      }));
+
+    return {
+      people,
+      hours: Math.round(people.reduce((sum, person) => sum + person.hours, 0) * 100) / 100,
+      pay: Math.round(people.reduce((sum, person) => sum + person.pay, 0) * 100) / 100,
+    };
+  }, [rows]);
+
   const totals = useMemo(() => {
     const payable = rows.reduce((sum, row) => sum + row.breakdown.amount, 0);
     const paid = rows.reduce(
@@ -214,6 +240,9 @@ const PayrollTab: React.FC<PayrollTabProps> = ({
         'Days worked': row.breakdown.daysWorked,
         'Hours (raw)': row.breakdown.hoursWorked,
         'Hours (paid)': row.breakdown.paidHours,
+        'Overtime hours': row.breakdown.overtimeHours,
+        'Overtime days': row.breakdown.overtimeDays,
+        'Overtime value': row.breakdown.overtimePay,
         'Expected hours': row.breakdown.expectedHours,
         'Hourly rate': row.breakdown.hourlyRate,
         Salary: row.breakdown.amount,
@@ -285,6 +314,39 @@ const PayrollTab: React.FC<PayrollTabProps> = ({
         </Card>
       </div>
 
+      {overtime.people.length > 0 && (
+        <div className="rounded-xl border border-amber-300 bg-amber-50 p-4 dark:border-amber-800 dark:bg-amber-950/40">
+          <p className="text-sm font-semibold text-amber-900 dark:text-amber-200">
+            {overtime.hours} hour{overtime.hours === 1 ? '' : 's'} of overtime this month
+            {overtime.people.length > 1 ? ` — ${overtime.people.length} employees` : ''}
+          </p>
+          <p className="mt-0.5 text-xs text-amber-800 dark:text-amber-300">
+            These are hours worked beyond each person's standard day. They are{' '}
+            <b>already included in the salary below</b>, paid at their normal hourly rate
+            ({formatCurrency(overtime.pay)} in total). To pay a different rate, or not to pay
+            them at all, open the day on <b>Records</b> and set the paid hours by hand.
+          </p>
+          <ul className="mt-2 flex flex-col gap-1">
+            {overtime.people.map((person) => (
+              <li
+                key={person.name}
+                className="flex flex-wrap items-baseline gap-x-2 text-xs text-amber-900 dark:text-amber-200"
+              >
+                <span className="font-semibold">{person.name}</span>
+                <span>
+                  {person.hours} hr over {person.days} day{person.days === 1 ? '' : 's'}
+                </span>
+                <span className="opacity-80">
+                  {person.mode === 'daily'
+                    ? '· flat daily wage, nothing extra is added'
+                    : `· worth ${formatCurrency(person.pay)}`}
+                </span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
       <Card>
         <CardContent className="p-0">
           <div className="overflow-x-auto">
@@ -294,8 +356,9 @@ const PayrollTab: React.FC<PayrollTabProps> = ({
                   <TableHead>Employee</TableHead>
                   <TableHead className="text-right">Days</TableHead>
                   <TableHead className="text-right">Hours worked</TableHead>
+                  <TableHead className="text-right">Overtime</TableHead>
                   <TableHead className="text-right">Rate/hr</TableHead>
-                  <TableHead>Calculation</TableHead>
+                  <TableHead className="hidden lg:table-cell">Calculation</TableHead>
                   <TableHead className="text-right">Salary</TableHead>
                   <TableHead className="text-right">Payment</TableHead>
                 </TableRow>
@@ -303,7 +366,7 @@ const PayrollTab: React.FC<PayrollTabProps> = ({
               <TableBody>
                 {rows.length === 0 ? (
                   <TableRow>
-                    <TableCell colSpan={7} className="py-12 text-center">
+                    <TableCell colSpan={8} className="py-12 text-center">
                       <Wallet className="mx-auto mb-3 h-8 w-8 text-gray-400" />
                       <p className="font-medium text-gray-700 dark:text-gray-300">No active employees</p>
                       <p className="mt-1 text-sm text-gray-500">
@@ -328,10 +391,24 @@ const PayrollTab: React.FC<PayrollTabProps> = ({
                           <span className="font-medium">{row.breakdown.paidHours}</span>
                           <span className="text-xs text-gray-500"> / {row.breakdown.expectedHours}</span>
                         </TableCell>
+                        <TableCell className="text-right">
+                          {row.breakdown.overtimeHours > 0 ? (
+                            <span
+                              className="font-medium text-amber-700 dark:text-amber-400"
+                              title={`Over ${row.breakdown.overtimeDays} day(s), beyond a ${
+                                row.employee.standardHoursPerDay || settings.standardHoursPerDay
+                              }h day`}
+                            >
+                              +{row.breakdown.overtimeHours}
+                            </span>
+                          ) : (
+                            <span className="text-gray-400">—</span>
+                          )}
+                        </TableCell>
                         <TableCell className="text-right text-xs text-gray-600 dark:text-gray-400">
                           {row.breakdown.hourlyRate ? formatCurrency(row.breakdown.hourlyRate) : '—'}
                         </TableCell>
-                        <TableCell>
+                        <TableCell className="hidden lg:table-cell">
                           <span className="text-xs text-gray-600 dark:text-gray-400">
                             {row.breakdown.formula}
                           </span>
